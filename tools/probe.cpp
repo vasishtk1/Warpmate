@@ -1,103 +1,174 @@
-// warpmate-probe: looks up a position in a solved table.
+// warpmate-probe: looks up a position in the solved tables.
 //
-//   warpmate-probe "7k/8/6K1/8/8/8/8/R7 w - - 0 1"
-//   warpmate-probe -t tables/krvk.wmtb "<fen>"
+//   warpmate-probe "8/8/8/8/8/2k5/1R6/K7 w - - 0 1"
+//   warpmate-probe -d tables "<fen>"
 //
-// Prints the verdict, every legal move with its result, and the line of
-// perfect play to the end.
+// Works for any endgame that warpmate-gen has solved. Loads the table for
+// the position's material plus every table it can turn into (for captures
+// and promotions), then prints the verdict, every legal move's outcome, and
+// the line of perfect play.
 #include <cstdio>
-#include <cstring>
+#include <map>
 #include <string>
+#include <vector>
 
-#include "core/notation.h"
+#include "egtb/notation.h"
+#include "egtb/solver.h"
 #include "io/tablebase.h"
-#include "solver/krk_solver.h"
 
 using namespace wm;
-using namespace wm::krk;
+using namespace wm::egtb;
 
 namespace {
 
-// Text for the result after a move, from the mover's point of view.
-std::string outcome_after(const Position& p, const Move& m, const Value* table) {
-    const Value c = child_value(table, p, m);
-    if (m.capture || c == kDraw) return "draw";
-    const int n = moves_to_mate(c);
-    if (c == 0) return "checkmate";
-    // The child is the opponent's position: their loss is our win.
-    return is_loss(c) ? "wins, mate in " + std::to_string(n)
-                      : "loses, mated in " + std::to_string(n);
+// Loads `m` and, recursively, everything it depends on.
+bool load_family(const std::string& dir, const Material& m, std::map<std::string, Tablebase>* out,
+                 std::string* error) {
+    const std::string name = material_name(m);
+    if (out->count(name)) return true;
+    Tablebase tb;
+    if (!load_tablebase(dir + "/" + name + ".wmtb", &tb, error)) {
+        *error += " (solve it with: warpmate-gen " + name + ")";
+        return false;
+    }
+    if (tb.name != name || tb.values.size() != table_size(m)) {
+        *error = dir + "/" + name + ".wmtb doesn't match " + name;
+        return false;
+    }
+    (*out)[name] = std::move(tb);
+    for (const Material& d : direct_dependencies(m)) {
+        if (!load_family(dir, d, out, error)) return false;
+    }
+    return true;
 }
 
-void print_line(Position p, const Value* table) {
-    std::printf("Perfect play:");
-    for (int ply = 0; ply < 64; ++ply) {
-        const Value v = table[encode(p)];
-        Move m;
-        if (!best_move(table, p, &m)) break;
-        if (p.stm == kWhite) std::printf(" %d.", ply / 2 + 1);
-        else if (ply == 0) std::printf(" 1...");
-        std::printf(" %s", move_to_string(p, m).c_str());
-        if (m.capture || v == kDraw) break;  // draws don't end in mate
-        p = make_move(p, m);
-    }
-    std::printf("\n");
+// Ranks a child value from the mover's point of view (higher is better).
+int score_for_mover(Value child) {
+    if (is_loss(child)) return 1000 - child;  // opponent lost: sooner is better
+    if (is_win(child)) return -1000 + child;  // opponent wins: later is better
+    return 0;
+}
+
+struct Choice {
+    Move move;
+    Value child;
+};
+
+std::vector<Choice> all_moves(const std::vector<SubTable>& subs, const Board& b) {
+    Material m;
+    Position p;
+    to_position(b, &m, &p);
+    std::vector<Choice> out;
+    struct Collect {
+        std::vector<Choice>* out;
+        const std::vector<SubTable>* subs;
+        const Material* m;
+        const Position* p;
+        bool operator()(const Move& mv) {
+            const Board after = apply_move(*m, *p, mv);
+            out->push_back({mv, lookup(subs->data(), static_cast<int>(subs->size()), after)});
+            return true;
+        }
+    } collect{&out, &subs, &m, &p};
+    for_each_move(m, p, collect);
+    return out;
+}
+
+std::string outcome_text(const Move& mv, Value c) {
+    (void)mv;
+    if (c == kDraw) return "draw";
+    if (c == 0) return "checkmate";
+    const int n = moves_to_mate(c);
+    return is_loss(c) ? "wins, mate in " + std::to_string(n) : "loses, mated in " + std::to_string(n);
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string table_path = "tables/krvk.wmtb";
+    std::string dir = "tables";
     std::string fen;
     for (int i = 1; i < argc; ++i) {
-        if ((!std::strcmp(argv[i], "-t") || !std::strcmp(argv[i], "--table")) && i + 1 < argc) {
-            table_path = argv[++i];
+        const std::string arg = argv[i];
+        if ((arg == "-d" || arg == "-t") && i + 1 < argc) {
+            dir = argv[++i];
         } else if (fen.empty()) {
-            fen = argv[i];
+            fen = arg;
         } else {
             fen.clear();
             break;
         }
     }
     if (fen.empty()) {
-        std::fprintf(stderr, "usage: %s [-t TABLE] \"<FEN>\"\n", argv[0]);
+        std::fprintf(stderr, "usage: %s [-d DIR] \"<FEN>\"\n", argv[0]);
         return 2;
     }
 
     std::string error;
-    Tablebase tb;
-    if (!load_tablebase(table_path, &tb, &error)) {
-        std::fprintf(stderr, "error: %s (run warpmate-solve first)\n", error.c_str());
-        return 1;
-    }
-    if (tb.name != "KRvK" || tb.values.size() != kNumPositions) {
-        std::fprintf(stderr, "error: %s is not a KRvK table\n", table_path.c_str());
-        return 1;
-    }
-    auto pos = parse_fen(fen, &error);
-    if (!pos) {
+    auto board = parse_fen(fen, &error);
+    if (!board) {
         std::fprintf(stderr, "error: %s\n", error.c_str());
         return 1;
     }
+    Material actual;
+    Position pos;
+    to_position(*board, &actual, &pos);
 
-    const Position p = *pos;
-    const Value v = tb.values[encode(p)];
-    std::printf("%s\n", to_fen(p).c_str());
-    std::printf("Result: %s\n", describe(p, v).c_str());
-    if (v == kInvalid) return 0;
-
-    Move moves[kMaxMoves];
-    const int n = generate_moves(p, moves);
-    Move best;
-    if (best_move(tb.values.data(), p, &best)) {
-        std::printf("Best move: %s\n\n", move_to_string(p, best).c_str());
-        std::printf("All moves:\n");
-        for (int i = 0; i < n; ++i) {
-            std::printf("  %-6s %s\n", move_to_string(p, moves[i]).c_str(),
-                        outcome_after(p, moves[i], tb.values.data()).c_str());
-        }
-        std::printf("\n");
-        print_line(p, tb.values.data());
+    std::map<std::string, Tablebase> loaded;
+    if (actual.n > 2 && !load_family(dir, canonical(actual), &loaded, &error)) {
+        std::fprintf(stderr, "error: %s\n", error.c_str());
+        return 1;
     }
+    std::vector<SubTable> subs;
+    for (const auto& [name, tb] : loaded) {
+        Material m;
+        parse_material(name, &m);
+        subs.push_back(SubTable{m, tb.values.data()});
+    }
+
+    std::printf("%s\n", to_fen(*board).c_str());
+    if (!is_valid(actual, pos)) {
+        std::printf("Result: Invalid position\n");
+        return 0;
+    }
+    const Value v = lookup(subs.data(), static_cast<int>(subs.size()), *board);
+    std::printf("Result: %s\n", describe(board->stm, v).c_str());
+
+    std::vector<Choice> moves = all_moves(subs, *board);
+    if (moves.empty()) return 0;
+    size_t best = 0;
+    for (size_t i = 1; i < moves.size(); ++i) {
+        if (score_for_mover(moves[i].child) > score_for_mover(moves[best].child)) best = i;
+    }
+    std::printf("Best move: %s\n\nAll moves:\n", move_to_string(actual, pos, moves[best].move).c_str());
+    for (const Choice& c : moves) {
+        std::printf("  %-7s %s\n", move_to_string(actual, pos, c.move).c_str(),
+                    outcome_text(c.move, c.child).c_str());
+    }
+
+    // Follow perfect play until mate (or a draw is reached).
+    std::printf("\nPerfect play:");
+    Board b = *board;
+    for (int ply = 0; ply < 300; ++ply) {
+        Material m;
+        Position p;
+        to_position(b, &m, &p);
+        const Value here = lookup(subs.data(), static_cast<int>(subs.size()), b);
+        std::vector<Choice> options = all_moves(subs, b);
+        if (options.empty()) break;
+        size_t pick = 0;
+        for (size_t i = 1; i < options.size(); ++i) {
+            if (score_for_mover(options[i].child) > score_for_mover(options[pick].child)) pick = i;
+        }
+        // Move numbers count full moves; if Black starts, White's first
+        // reply is move 2.
+        const int move_no = (ply + (board->stm == kBlack ? 1 : 0)) / 2 + 1;
+        if (b.stm == kWhite) std::printf(" %d.", move_no);
+        else if (ply == 0) std::printf(" %d...", move_no);
+        std::printf(" %s", move_to_string(m, p, options[pick].move).c_str());
+        if (here == kDraw) break;  // draws don't end in mate: show one move
+        b = apply_move(m, p, options[pick].move);
+        if (b.n == 2) break;
+    }
+    std::printf("\n");
     return 0;
 }

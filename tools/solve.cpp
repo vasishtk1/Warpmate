@@ -1,6 +1,6 @@
 // warpmate-solve: solves King + Rook vs King and saves the table.
 //
-//   warpmate-solve [-o tables/krvk.wmtb] [--threads N | --gpu]
+//   warpmate-solve [-o tables/KRvK.wmtb] [--threads N | --gpu]
 //
 // Default is one CPU thread. --threads uses several CPU threads; --gpu uses
 // CUDA (only in builds with GPU support). All produce the same table.
@@ -23,7 +23,7 @@ using namespace wm;
 using namespace wm::krk;
 
 int main(int argc, char** argv) {
-    std::string out_path = "tables/krvk.wmtb";
+    std::string out_path = "tables/KRvK.wmtb";
     int threads = 1;
     bool use_gpu = false;
     for (int i = 1; i < argc; ++i) {
