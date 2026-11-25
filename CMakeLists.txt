@@ -52,7 +52,7 @@ target_link_libraries(warpmate_core PUBLIC Threads::Threads)
 
 # GPU solver
 if(WARPMATE_HAS_CUDA)
-  add_library(warpmate_gpu src/gpu/krk_gpu.cu)
+  add_library(warpmate_gpu src/gpu/krk_gpu.cu src/gpu/egtb_gpu.cu)
   target_link_libraries(warpmate_gpu PUBLIC warpmate_core CUDA::cudart)
   target_compile_definitions(warpmate_gpu PUBLIC WARPMATE_HAS_CUDA=1)
   set(WARPMATE_SOLVER_LIBS warpmate_gpu)
@@ -68,7 +68,7 @@ add_executable(warpmate-probe tools/probe.cpp)
 target_link_libraries(warpmate-probe PRIVATE warpmate_core)
 
 add_executable(warpmate-gen tools/gen.cpp)
-target_link_libraries(warpmate-gen PRIVATE warpmate_core)
+target_link_libraries(warpmate-gen PRIVATE ${WARPMATE_SOLVER_LIBS})
 
 add_executable(warpmate-bench tools/bench.cpp)
 target_link_libraries(warpmate-bench PRIVATE ${WARPMATE_SOLVER_LIBS})
@@ -97,4 +97,8 @@ if(WARPMATE_HAS_CUDA)
   add_executable(warpmate-test-gpu tests/test_gpu.cpp)
   target_link_libraries(warpmate-test-gpu PRIVATE warpmate_gpu)
   add_test(NAME gpu COMMAND warpmate-test-gpu)
+
+  add_executable(warpmate-test-egtb-gpu tests/test_egtb_gpu.cpp)
+  target_link_libraries(warpmate-test-egtb-gpu PRIVATE warpmate_gpu)
+  add_test(NAME egtb-gpu COMMAND warpmate-test-egtb-gpu)
 endif()

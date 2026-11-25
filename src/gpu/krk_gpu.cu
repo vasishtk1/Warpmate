@@ -6,31 +6,17 @@
 // allocating GPU memory, launching kernels, and copying results back.
 #include "gpu/krk_gpu.h"
 
-#include <cuda_runtime.h>
-
 #include <chrono>
-#include <stdexcept>
 #include <string>
 
+#include "gpu/cuda_check.h"
 #include "solver/krk_retro.h"
 
 namespace wm::krk {
 
 namespace {
 
-// Every CUDA API call returns an error code. Ignoring them is the most common
-// CUDA bug: a failed call silently leaves garbage behind and the program
-// crashes (or gives wrong answers) somewhere else. CUDA_CHECK turns any
-// failure into an exception that names the call and the line.
-#define CUDA_CHECK(call)                                                               \
-    do {                                                                               \
-        const cudaError_t err_ = (call);                                               \
-        if (err_ != cudaSuccess) {                                                     \
-            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err_) + \
-                                     " at " __FILE__ ":" + std::to_string(__LINE__) +  \
-                                     " (" #call ")");                                  \
-        }                                                                              \
-    } while (0)
+// CUDA_CHECK (gpu/cuda_check.h) turns any failed CUDA call into an exception.
 
 // Threads per block. 256 is a common default: a multiple of 32 (the warp
 // size) and enough threads per block to keep the GPU busy.
