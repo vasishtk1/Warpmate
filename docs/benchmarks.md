@@ -36,7 +36,7 @@ Profile of one `warpmate-solve --gpu` run on the T4:
 | `step_kernel` (one solving round) | 33 | 6.60 ms | 97.9% |
 | `init_kernel` | 1 | 0.13 ms | 1.9% |
 | `finalize_kernel` | 1 | 0.01 ms | 0.2% |
-| Memory copies, device → host | 35 | 0.10 ms | (outside kernels) |
+| Memory copies, GPU to CPU | 35 | 0.10 ms | (outside kernels) |
 
 - **The solving rounds are the whole cost.** Each round checks all 524,288 positions even though most are already solved, so most threads exit immediately. Only revisiting positions near newly solved ones is the planned next optimization.
 - **Data transfer is negligible:** the table stays on the GPU for the whole solve; each round copies back only a 4-byte counter, and the 0.5 MB table is copied once at the end.

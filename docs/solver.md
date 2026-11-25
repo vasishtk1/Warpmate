@@ -5,7 +5,7 @@ The CPU solver described here is the reference implementation that the CUDA solv
 
 ## Board representation
 
-Squares are numbered 0–63 (`a1` = 0, `h1` = 7, `a8` = 56, `h8` = 63). Sets of squares are stored as **bitboards**: 64-bit integers with one bit per square, so set operations such as "squares the king could move to, minus squares the rook attacks" are single AND/OR instructions.
+Squares are numbered 0 to 63 (`a1` = 0, `h1` = 7, `a8` = 56, `h8` = 63). Sets of squares are stored as **bitboards**: 64-bit integers with one bit per square, so set operations such as "squares the king could move to, minus squares the rook attacks" are single AND/OR instructions.
 
 King and rook attacks are computed with a few bit operations and short loops rather than large lookup tables. On a GPU, scattered table reads are expensive while arithmetic is cheap, so this keeps per-thread work in registers.
 
@@ -37,7 +37,7 @@ Parity encodes win vs loss, so no extra bits are needed.
 ## Retrograde analysis
 
 1. **Initialize:** mark invalid positions, checkmates (value 0) and stalemates (draw).
-2. **Round `ply` = 1, 2, 3, …**, over every unsolved position:
+2. **Round `ply` = 1, 2, 3, ...**, over every unsolved position:
    - *odd ply:* if **any** move reaches a lost position, the position is won in `ply`.
    - *even ply:* if **every** move reaches a won position, the position is lost in `ply`.
 3. **Stop** after a round that solves nothing. Remaining positions are draws.
@@ -62,7 +62,7 @@ All three share `init_value` and `retro_step`; they differ only in how positions
 
 ### GPU solver (v1)
 
-- **Kernels:** `init_kernel` (round 0), `step_kernel` (one round), `finalize_kernel` (unsolved → draw).
+- **Kernels:** `init_kernel` (round 0), `step_kernel` (one round), `finalize_kernel` (turns unsolved positions into draws).
 - **Host loop:** for each round, reset a device counter, launch `step_kernel`, then copy the counter back. That copy also synchronizes with the kernel, and the loop stops when a round solves nothing.
 - **Counters** (positions changed, checkmates, stalemates) are updated with `atomicAdd`.
 - **Data movement:** the table stays on the GPU for the whole solve; only a 4-byte counter crosses each round, and the 0.5 MB table is copied back once.
@@ -76,7 +76,7 @@ Profiling shows `step_kernel` accounts for ~98% of GPU time, mainly because ever
 
 ### Material and canonical form
 
-A **material** such as `KQvKR` lists the pieces in canonical order: white king, other white pieces strongest first (Q, R, B, N, P), then the same for Black. A position stores one square per piece in that order, and the row index is `[stm][sq0][sq1]…`, the same layout as the KRvK solver. The general KRvK table is therefore byte-for-byte identical to the specialized one, which the tests check.
+A **material** such as `KQvKR` lists the pieces in canonical order: white king, other white pieces strongest first (Q, R, B, N, P), then the same for Black. A position stores one square per piece in that order, and the row index is `[stm][sq0][sq1]...`, the same layout as the KRvK solver. The general KRvK table is therefore byte-for-byte identical to the specialized one, which the tests check.
 
 Each endgame is stored once, **with the stronger side as White**. A position where Black has the extra material is looked up by swapping colours, mirroring the board top-to-bottom (`square ^ 56`) and flipping the side to move. Values are measured from the side to move, so they carry over unchanged.
 

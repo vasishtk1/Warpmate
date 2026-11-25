@@ -1,4 +1,4 @@
-# Warpmate — CUDA Chess Endgame Solver
+# Warpmate: CUDA Chess Endgame Solver
 
 Warpmate is a GPU pipeline built around small chess endgames:
 
@@ -7,7 +7,7 @@ Warpmate is a GPU pipeline built around small chess endgames:
 3. **Run** the network with custom CUDA inference kernels, benchmarked against PyTorch and TensorRT.
 4. **Play** on a two-player dashboard: two people share one board while live win/draw/loss bars update after every move, next to the perfect answer.
 
-> 🚧 **Status:** early development. Features marked *planned* are not built yet.
+> **Status:** early development. Features marked *planned* are not built yet.
 
 ## How it works
 
@@ -37,16 +37,16 @@ flowchart LR
 
 ## Features
 
-- **CPU reference solver** in C++ for king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate ✅
-- **General solver** for any endgame of up to 4 pieces (all piece types, pawns and promotion), with linked tables for captures and promotions ✅
-- **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play ✅
-- **CUDA solver** (v1: one GPU thread per position): produces a table byte-for-byte identical to the CPU's, about 66× faster than the best CPU result on the same machine ✅
+- **CPU reference solver** in C++ for king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate *(done)*
+- **General solver** for any endgame of up to 4 pieces (all piece types, pawns and promotion), with linked tables for captures and promotions *(done)*
+- **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play *(done)*
+- **CUDA solver** (v1: one GPU thread per position): produces a table byte-for-byte identical to the CPU's, about 66× faster than the best CPU result on the same machine *(done)*
 - **4-piece endgames on the GPU**, then faster CUDA versions with backward move generation and board-symmetry compression *(planned)*
-- **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames match the official tablebases, with 0 mismatches ✅
+- **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames match the official tablebases, with 0 mismatches *(done)*
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
 - **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*
-- **Benchmarks** comparing single-threaded CPU, multithreaded CPU, and GPU, with Nsight profiling ✅
+- **Benchmarks** comparing single-threaded CPU, multithreaded CPU, and GPU, with Nsight profiling *(done)*
 
 ## Tech stack
 
