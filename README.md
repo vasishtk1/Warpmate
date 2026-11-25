@@ -39,12 +39,13 @@ flowchart LR
 
 - **CPU reference solver** in C++ for king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate ✅
 - **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play ✅
-- **CUDA solver** with successive optimizations: a parallel sweep, backward move generation, and board-symmetry compression *(planned)*
+- **CUDA solver** (v1: one GPU thread per position): produces a table byte-for-byte identical to the CPU's, about 66× faster than the best CPU result on the same machine ✅
+- **Faster CUDA versions** with backward move generation and board-symmetry compression, plus 4-piece endings *(planned)*
 - **Verified against Syzygy**: all 399,112 legal KRvK positions match the official tablebases, with 0 mismatches ✅
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
 - **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*
-- **Benchmarks** comparing single-threaded CPU, multithreaded CPU, and GPU versions *(planned)*
+- **Benchmarks** comparing single-threaded CPU, multithreaded CPU, and GPU, with Nsight profiling ✅
 
 ## Tech stack
 
@@ -65,12 +66,17 @@ Warpmate/
 ├── CMakeLists.txt         Build configuration
 ├── src/
 │   ├── core/              Board, attacks, KRvK positions and moves (CPU + GPU)
-│   ├── solver/            Retrograde solver: per-position step + CPU driver
+│   ├── solver/            Retrograde solver: per-position step, CPU drivers (1 thread, multithreaded)
+│   ├── gpu/               CUDA solver: kernels and GPU memory management
 │   └── io/                Tablebase file format
 ├── tools/
-│   ├── solve.cpp          warpmate-solve: build a table
-│   └── probe.cpp          warpmate-probe: look up a position
-├── tests/                 Unit and consistency tests
+│   ├── solve.cpp          warpmate-solve: build a table (CPU or --gpu)
+│   ├── probe.cpp          warpmate-probe: look up a position
+│   └── bench.cpp          warpmate-bench: time every solver and check they agree
+├── tests/                 Unit, consistency, and CPU-vs-GPU tests
+├── examples/
+│   └── cuda_basics/       Introductory CUDA programs
+├── notebooks/             Colab notebook to build and run on a free GPU
 ├── scripts/
 │   └── verify_syzygy.py   Check a table against Syzygy
 └── docs/                  Technical documentation
@@ -78,7 +84,7 @@ Warpmate/
 
 ## Getting started
 
-Requires CMake 3.20+ and a C++17 compiler.
+Requires CMake 3.20+ and a C++17 compiler. GPU support is built automatically when the CUDA toolkit (`nvcc`) is found; without it, everything else still builds and runs on the CPU.
 
 ```bash
 cmake -S . -B build
@@ -86,8 +92,12 @@ cmake --build build
 ctest --test-dir build          # run the tests
 
 ./build/warpmate-solve          # solve KRvK, writes tables/krvk.wmtb
+./build/warpmate-solve --gpu    # same, on the GPU
 ./build/warpmate-probe "8/8/8/8/8/2k5/1R6/K7 w - - 0 1"
+./build/warpmate-bench          # time CPU vs GPU
 ```
+
+No NVIDIA GPU? Open [`notebooks/phase2_gpu_solver.ipynb`](notebooks/phase2_gpu_solver.ipynb) in Google Colab with a free T4 GPU.
 
 Example probe output (abridged):
 
@@ -110,4 +120,14 @@ See [docs/solver.md](docs/solver.md) for how the solver works.
 
 **Correctness (KRvK, CPU solver):** every one of the 399,112 legal positions matches the Syzygy tablebases (0 mismatches), and the longest forced mate is 16 moves, the known value. See [docs/verification.md](docs/verification.md).
 
-GPU benchmarks and model accuracy will be published here once measured.
+**Speed (KRvK, Colab Tesla T4):**
+
+| Solver | Median time | Speedup vs 1 CPU thread |
+|---|---|---|
+| CPU, 1 thread | 616 ms | 1.0× |
+| CPU, 2 threads | 536 ms | 1.1× |
+| **GPU v1** | **8.1 ms** | **76×** |
+
+The GPU table is byte-for-byte identical to the CPU table. Colab's CPU is weak (2 threads on one core), so the gap would be smaller against a strong multi-core CPU; see [docs/benchmarks.md](docs/benchmarks.md) for methodology, caveats, and the Nsight profile.
+
+Model accuracy will be published here once measured.
