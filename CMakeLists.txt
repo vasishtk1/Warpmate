@@ -23,6 +23,9 @@ target_include_directories(warpmate_core PUBLIC src)
 add_executable(warpmate-solve tools/solve.cpp)
 target_link_libraries(warpmate-solve PRIVATE warpmate_core)
 
+add_executable(warpmate-probe tools/probe.cpp)
+target_link_libraries(warpmate-probe PRIVATE warpmate_core)
+
 # Tests
 enable_testing()
 
