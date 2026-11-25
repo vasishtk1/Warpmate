@@ -13,8 +13,8 @@
 // meaning "compile this for the CPU (host) and for the GPU (device)".
 // When compiled by a normal C++ compiler it expands to nothing.
 // Writing the chess logic this way lets the exact same code power the CPU
-// solver and, later, the CUDA kernels.
-#if defined(__CUDACC__)
+// solver and, later, the CUDA kernels. (__CUDA__ covers clang's CUDA mode.)
+#if defined(__CUDACC__) || defined(__CUDA__)
 #define WM_HD __host__ __device__
 #else
 #define WM_HD
