@@ -37,9 +37,10 @@ flowchart LR
 
 ## Features
 
-- **CPU reference solver** in C++ for king + rook vs king *(in progress)*
+- **CPU reference solver** in C++ for king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate ✅
+- **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play ✅
 - **CUDA solver** with successive optimizations: a parallel sweep, backward move generation, and board-symmetry compression *(planned)*
-- **Verification** of every position against the public Syzygy tablebases *(planned)*
+- **Verification** of every position against the public Syzygy tablebases *(script ready, results pending)*
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
 - **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*
@@ -61,10 +62,49 @@ flowchart LR
 
 ```
 Warpmate/
-├── README.md        Project overview (this file)
-├── docs/            Technical documentation
-└── ...              Solver, ML, and dashboard code (added as development progresses)
+├── CMakeLists.txt         Build configuration
+├── src/
+│   ├── core/              Board, attacks, KRvK positions and moves (CPU + GPU)
+│   ├── solver/            Retrograde solver: per-position step + CPU driver
+│   └── io/                Tablebase file format
+├── tools/
+│   ├── solve.cpp          warpmate-solve: build a table
+│   └── probe.cpp          warpmate-probe: look up a position
+├── tests/                 Unit and consistency tests
+├── scripts/
+│   └── verify_syzygy.py   Check a table against Syzygy
+└── docs/                  Technical documentation
 ```
+
+## Getting started
+
+Requires CMake 3.20+ and a C++17 compiler.
+
+```bash
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build          # run the tests
+
+./build/warpmate-solve          # solve KRvK, writes tables/krvk.wmtb
+./build/warpmate-probe "8/8/8/8/8/2k5/1R6/K7 w - - 0 1"
+```
+
+Example probe output (abridged):
+
+```
+Result: White mates in 16
+Best move: Kb1
+Perfect play: 1. Kb1 Kd4 2. Kc2 Kc4 3. Rb1 Kd4 ... 15. Kc7 Ka7 16. Ra1#
+```
+
+To verify against Syzygy, install the Python requirements and download `KRvK.rtbw` (see the instructions at the top of `scripts/verify_syzygy.py`), then:
+
+```bash
+pip install -r scripts/requirements.txt
+python scripts/verify_syzygy.py --syzygy syzygy
+```
+
+See [docs/solver.md](docs/solver.md) for how the solver works.
 
 ## Results
 
