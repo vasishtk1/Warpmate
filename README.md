@@ -1,12 +1,19 @@
 # Warpmate — CUDA Chess Endgame Solver
 
-Warpmate computes **perfect play for small chess endgames** on the GPU. Give it a set of pieces (say king + rook vs king) and it works out, for every possible arrangement of those pieces, who wins with best play, in how many moves, and the best move. The results are stored in a lookup table (an *endgame tablebase*) and explored through an interactive web demo.
+Warpmate is a GPU pipeline built around small chess endgames:
 
-> 🚧 **Status:** early development. Sections marked *planned* describe work in progress.
+1. **Solve** every position of an endgame (say king + rook vs king) with CUDA, producing perfect win/draw/loss labels and the exact distance to mate.
+2. **Train** a small neural network on that perfectly labeled data to predict who wins from any position.
+3. **Run** the network with custom CUDA inference kernels, benchmarked against PyTorch and TensorRT.
+4. **Play** on a two-player dashboard: two people share one board while live win/draw/loss bars update after every move, next to the perfect answer.
+
+> 🚧 **Status:** early development. Features marked *planned* are not built yet.
 
 ## How it works
 
-The solver uses **retrograde analysis**, working backward from checkmate:
+### Solving endgames (retrograde analysis)
+
+The solver works backward from checkmate:
 
 1. List every legal position for the chosen pieces.
 2. Mark each checkmate as a loss for the side to move.
@@ -15,22 +22,27 @@ The solver uses **retrograde analysis**, working backward from checkmate:
 
 Each round applies the same check to every position independently, which maps naturally onto the GPU: one CUDA thread per position, millions of positions per round.
 
+### Learning from perfect data
+
+Because the solver labels every position exactly, the network's accuracy can be measured against ground truth rather than estimated. During play, every legal next move is evaluated in a single batched GPU call, so the dashboard can rank moves and flag blunders in real time.
+
 ```mermaid
 flowchart LR
-    A[Enumerate positions] --> B[Mark checkmates]
-    B --> C[GPU kernel:<br/>one thread per position<br/>labels wins & losses]
-    C -->|anything changed?| C
-    C -->|no change| D[Remaining = draws]
-    D --> E[(Tablebase file)]
-    E --> F[Web demo:<br/>place pieces, see result<br/>and best move]
+    A[CUDA solver:<br/>label every position] --> B[(Tablebase)]
+    B --> C[Train network<br/>PyTorch]
+    B --> F
+    C --> D[Custom CUDA<br/>inference kernels]
+    D --> F[Two-player dashboard:<br/>live win/draw/loss bars,<br/>ranked moves, perfect answer]
 ```
 
 ## Features
 
-- **CPU reference solver** in C++, used to check the GPU results *(planned)*
+- **CPU reference solver** in C++ for king + rook vs king *(in progress)*
 - **CUDA solver** with successive optimizations: a parallel sweep, backward move generation, and board-symmetry compression *(planned)*
 - **Verification** of every position against the public Syzygy tablebases *(planned)*
-- **Interactive demo**: drag pieces onto a board to see the result and best move, play against perfect defense, and view position heatmaps *(planned)*
+- **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
+- **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
+- **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*
 - **Benchmarks** comparing single-threaded CPU, multithreaded CPU, and GPU versions *(planned)*
 
 ## Tech stack
@@ -40,8 +52,10 @@ flowchart LR
 | Solver | C++17, CUDA |
 | Build | CMake |
 | Verification | Python, [python-chess](https://python-chess.readthedocs.io/) with Syzygy tablebases |
+| Machine learning | Python, PyTorch |
+| Inference | CUDA C++, compared with PyTorch and TensorRT |
 | Profiling | NVIDIA Nsight Systems / Nsight Compute |
-| Demo | HTML, CSS, JavaScript (static site) |
+| Dashboard | HTML, CSS, JavaScript |
 
 ## Project structure
 
@@ -49,9 +63,9 @@ flowchart LR
 Warpmate/
 ├── README.md        Project overview (this file)
 ├── docs/            Technical documentation
-└── ...              Solver, verification, and demo code (added as development progresses)
+└── ...              Solver, ML, and dashboard code (added as development progresses)
 ```
 
 ## Results
 
-Benchmarks and verification results will be published here once measured.
+Benchmarks, verification, and model accuracy results will be published here once measured.
