@@ -1,12 +1,14 @@
 #include "solver/krk_solver.h"
 
+#include <algorithm>
 #include <chrono>
+#include <thread>
 
 #include "solver/krk_retro.h"
 
 namespace wm::krk {
 
-SolveResult solve(const std::function<void(const RoundStats&)>& on_round) {
+SolveResult solve(const RoundCallback& on_round) {
     SolveResult result;
     const auto start = std::chrono::steady_clock::now();
 
@@ -48,6 +50,86 @@ SolveResult solve(const std::function<void(const RoundStats&)>& on_round) {
         if (v == kUnknown) v = kDraw;
     }
 
+    result.seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    return result;
+}
+
+namespace {
+
+// Runs fn(thread_id, begin, end) on `num_threads` threads, each over its own
+// contiguous slice of [0, kNumPositions), and waits for all of them.
+template <typename Fn>
+void parallel_ranges(int num_threads, Fn fn) {
+    std::vector<std::thread> threads;
+    const uint32_t chunk = (kNumPositions + num_threads - 1) / num_threads;
+    for (int t = 0; t < num_threads; ++t) {
+        const uint32_t begin = std::min(kNumPositions, t * chunk);
+        const uint32_t end = std::min(kNumPositions, begin + chunk);
+        threads.emplace_back(fn, t, begin, end);
+    }
+    for (auto& th : threads) th.join();
+}
+
+}  // namespace
+
+SolveResult solve_parallel(int num_threads, const RoundCallback& on_round) {
+    if (num_threads <= 0) num_threads = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
+    SolveResult result;
+    const auto start = std::chrono::steady_clock::now();
+
+    std::vector<uint32_t> mates(num_threads, 0), stales(num_threads, 0), changed(num_threads, 0);
+
+    result.table.resize(kNumPositions);
+    Value* table = result.table.data();
+    parallel_ranges(num_threads, [&](int t, uint32_t begin, uint32_t end) {
+        for (uint32_t i = begin; i < end; ++i) {
+            const Value v = init_value(i);
+            table[i] = v;
+            if (v == 0) ++mates[t];
+            if (v == kDraw) ++stales[t];
+        }
+    });
+    for (int t = 0; t < num_threads; ++t) {
+        result.checkmates += mates[t];
+        result.stalemates += stales[t];
+    }
+
+    // Each round reads from `src` and writes into `dst` (a copy of src).
+    // Unlike the GPU version, which updates one table in place, C++ treats
+    // threads reading and writing the same bytes as undefined behaviour, so
+    // the CPU version keeps reads and writes in separate buffers. The parity
+    // argument in krk_retro.h means both approaches give identical results.
+    std::vector<Value> next(kNumPositions);
+    for (int ply = 1; ply < kDraw; ++ply) {
+        next = result.table;
+        const Value* src = result.table.data();
+        Value* dst = next.data();
+        parallel_ranges(num_threads, [&](int t, uint32_t begin, uint32_t end) {
+            uint32_t count = 0;
+            for (uint32_t i = begin; i < end; ++i) {
+                if (src[i] != kUnknown) continue;
+                const Value v = retro_step(src, i, ply);
+                if (v != kUnknown) {
+                    dst[i] = v;
+                    ++count;
+                }
+            }
+            changed[t] = count;
+        });
+        result.table.swap(next);
+
+        uint32_t total = 0;
+        for (int t = 0; t < num_threads; ++t) total += changed[t];
+        const RoundStats stats{ply, total};
+        result.rounds.push_back(stats);
+        if (on_round) on_round(stats);
+        if (total == 0) break;
+    }
+
+    for (Value& v : result.table) {
+        if (v == kUnknown) v = kDraw;
+    }
     result.seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     return result;

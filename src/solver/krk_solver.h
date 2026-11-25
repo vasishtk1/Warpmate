@@ -23,9 +23,16 @@ struct SolveResult {
     double seconds = 0.0;
 };
 
-// Solves every position. `on_round` (optional) is called after each round,
-// e.g. to print progress.
-SolveResult solve(const std::function<void(const RoundStats&)>& on_round = nullptr);
+using RoundCallback = std::function<void(const RoundStats&)>;
+
+// Solves every position on one CPU thread. `on_round` (optional) is called
+// after each round, e.g. to print progress.
+SolveResult solve(const RoundCallback& on_round = nullptr);
+
+// Same algorithm split across `num_threads` CPU threads (0 = one per core).
+// Used as the fair CPU baseline when benchmarking the GPU: comparing a GPU
+// against a single CPU core would overstate the speedup.
+SolveResult solve_parallel(int num_threads = 0, const RoundCallback& on_round = nullptr);
 
 struct SideSummary {
     uint64_t wins = 0;

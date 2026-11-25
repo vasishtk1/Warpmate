@@ -9,7 +9,10 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-add_compile_options(-Wall -Wextra)
+# Warnings for C++ files only (the CUDA compiler takes different flags).
+add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall> $<$<COMPILE_LANGUAGE:CXX>:-Wextra>)
+
+find_package(Threads REQUIRED)
 
 # Shared chess and solver code.
 add_library(warpmate_core
@@ -18,6 +21,7 @@ add_library(warpmate_core
   src/solver/krk_solver.cpp
 )
 target_include_directories(warpmate_core PUBLIC src)
+target_link_libraries(warpmate_core PUBLIC Threads::Threads)
 
 # Command-line tools
 add_executable(warpmate-solve tools/solve.cpp)

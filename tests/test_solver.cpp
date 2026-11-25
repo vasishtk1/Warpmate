@@ -84,6 +84,17 @@ void test_consistency(const std::vector<Value>& t) {
     CHECK(bad == 0);
 }
 
+// The multithreaded solver must produce exactly the same table and rounds.
+void test_parallel_matches(const SolveResult& single) {
+    for (int threads : {1, 3, 8}) {
+        const SolveResult par = solve_parallel(threads);
+        CHECK(par.table == single.table);
+        CHECK(par.rounds.size() == single.rounds.size());
+        CHECK(par.checkmates == single.checkmates);
+        CHECK(par.stalemates == single.stalemates);
+    }
+}
+
 void test_save_load(const std::vector<Value>& t) {
     const std::string path = "warpmate_test_table.wmtb";
     std::string error;
@@ -103,6 +114,7 @@ int main() {
     test_best_move(result.table);
     test_longest_mate(result.table);
     test_consistency(result.table);
+    test_parallel_matches(result);
     test_save_load(result.table);
     return wm::test::finish("solver");
 }
