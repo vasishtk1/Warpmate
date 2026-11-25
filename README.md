@@ -38,10 +38,11 @@ flowchart LR
 ## Features
 
 - **CPU reference solver** in C++ for king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate ✅
+- **General solver** for any endgame of up to 4 pieces (all piece types, pawns and promotion), with linked tables for captures and promotions ✅
 - **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play ✅
 - **CUDA solver** (v1: one GPU thread per position): produces a table byte-for-byte identical to the CPU's, about 66× faster than the best CPU result on the same machine ✅
-- **Faster CUDA versions** with backward move generation and board-symmetry compression, plus 4-piece endings *(planned)*
-- **Verified against Syzygy**: all 399,112 legal KRvK positions match the official tablebases, with 0 mismatches ✅
+- **4-piece endgames on the GPU**, then faster CUDA versions with backward move generation and board-symmetry compression *(planned)*
+- **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames match the official tablebases, with 0 mismatches ✅
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
 - **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*
@@ -65,13 +66,15 @@ flowchart LR
 Warpmate/
 ├── CMakeLists.txt         Build configuration
 ├── src/
-│   ├── core/              Board, attacks, KRvK positions and moves (CPU + GPU)
-│   ├── solver/            Retrograde solver: per-position step, CPU drivers (1 thread, multithreaded)
+│   ├── core/              Bitboards and piece attacks; KRvK positions and moves (CPU + GPU)
+│   ├── solver/            KRvK solver: per-position step, CPU drivers (1 thread, multithreaded)
+│   ├── egtb/              General solver: any material, linked tables, CPU driver
 │   ├── gpu/               CUDA solver: kernels and GPU memory management
 │   └── io/                Tablebase file format
 ├── tools/
-│   ├── solve.cpp          warpmate-solve: build a table (CPU or --gpu)
-│   ├── probe.cpp          warpmate-probe: look up a position
+│   ├── solve.cpp          warpmate-solve: build the KRvK table (CPU or --gpu)
+│   ├── gen.cpp            warpmate-gen: solve any endgame (and its dependencies)
+│   ├── probe.cpp          warpmate-probe: look up any solved position
 │   └── bench.cpp          warpmate-bench: time every solver and check they agree
 ├── tests/                 Unit, consistency, and CPU-vs-GPU tests
 ├── examples/
@@ -91,9 +94,10 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build          # run the tests
 
-./build/warpmate-solve          # solve KRvK, writes tables/krvk.wmtb
-./build/warpmate-solve --gpu    # same, on the GPU
+./build/warpmate-gen --all3     # solve every 3-piece endgame into tables/
 ./build/warpmate-probe "8/8/8/8/8/2k5/1R6/K7 w - - 0 1"
+
+./build/warpmate-solve --gpu    # solve KRvK on the GPU
 ./build/warpmate-bench          # time CPU vs GPU
 ```
 
@@ -107,18 +111,26 @@ Best move: Kb1
 Perfect play: 1. Kb1 Kd4 2. Kc2 Kc4 3. Rb1 Kd4 ... 15. Kc7 Ka7 16. Ra1#
 ```
 
-To verify against Syzygy, install the Python requirements and download `KRvK.rtbw` (see the instructions at the top of `scripts/verify_syzygy.py`), then:
+Probing a king + pawn ending shows perfect play crossing into another table when the pawn promotes:
+
+```
+$ ./build/warpmate-probe "3k4/8/3K4/3P4/8/8/8/8 w - - 0 1"
+Result: White mates in 11
+Perfect play: 1. Ke6 Kc7 2. d6+ Kb6 3. d7 Kc7 4. Ke7 Kb6 5. d8=Q+ Kc5 ... 11. Qa2#
+```
+
+To verify against Syzygy, install the Python requirements and download the matching `.rtbw` files (see the instructions at the top of `scripts/verify_syzygy.py`), then:
 
 ```bash
 pip install -r scripts/requirements.txt
-python scripts/verify_syzygy.py --syzygy syzygy
+python scripts/verify_syzygy.py --syzygy syzygy tables/*.wmtb
 ```
 
 See [docs/solver.md](docs/solver.md) for how the solver works.
 
 ## Results
 
-**Correctness (KRvK, CPU solver):** every one of the 399,112 legal positions matches the Syzygy tablebases (0 mismatches), and the longest forced mate is 16 moves, the known value. See [docs/verification.md](docs/verification.md).
+**Correctness:** all five 3-piece endgames (KQvK, KRvK, KBvK, KNvK, KPvK) match the Syzygy tablebases on every one of 1,945,584 legal positions, with 0 mismatches. Longest forced mates match known values (KQvK 10 moves, KRvK 16). See [docs/verification.md](docs/verification.md).
 
 **Speed (KRvK, Colab Tesla T4):**
 

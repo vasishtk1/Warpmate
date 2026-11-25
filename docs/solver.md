@@ -70,6 +70,49 @@ All three share `init_value` and `retro_step`; they differ only in how positions
 
 Profiling shows `step_kernel` accounts for ~98% of GPU time, mainly because every round revisits all 524,288 positions even though most are already solved (see [benchmarks.md](benchmarks.md)).
 
+## General solver (any material)
+
+`src/egtb/` generalizes everything above to any set of up to 4 pieces (5 supported by the data structures), with all six piece types including pawns and promotion.
+
+### Material and canonical form
+
+A **material** such as `KQvKR` lists the pieces in canonical order: white king, other white pieces strongest first (Q, R, B, N, P), then the same for Black. A position stores one square per piece in that order, and the row index is `[stm][sq0][sq1]…`, the same layout as the KRvK solver. The general KRvK table is therefore byte-for-byte identical to the specialized one, which the tests check.
+
+Each endgame is stored once, **with the stronger side as White**. A position where Black has the extra material is looked up by swapping colours, mirroring the board top-to-bottom (`square ^ 56`) and flipping the side to move. Values are measured from the side to move, so they carry over unchanged.
+
+### Linked tables
+
+Captures and promotions leave the current endgame. In KPvK, promoting the pawn reaches KQvK, KRvK, KBvK or KNvK. In KRvKP, capturing the pawn reaches KRvK, and promoting it reaches KRvKQ (stored as KQvKR). The solver computes these **dependencies**, solves them first, and passes them to the per-position step as read-only sub-tables. A child position reached by a capture or promotion is put into canonical form and looked up in the matching sub-table.
+
+### Rounds with sub-tables
+
+Sub-table children can have distances larger than the current round, so the rules become:
+
+- *odd ply:* **win** if some child is lost in at most `ply − 1`
+- *even ply:* **loss** if every child is won, all in at most `ply − 1`
+
+Solving can't stop at the first empty round either. It continues until a round finds nothing **and** the round number has passed the largest distance in any sub-table.
+
+### Move generation
+
+Moves are produced through a **visitor** (a small struct whose `operator()` receives each legal move) instead of being written into an array. This keeps per-thread memory small on the GPU, and it lets the solver stop early: an odd round stops at the first winning move, an even round at the first escape. All of it is `WM_HD`, so it compiles for CUDA unchanged. Legality is checked by making each move on a copy and testing whether the mover's king is attacked.
+
+**Not handled yet:** en passant, which only matters with pawns on both sides (e.g. KPvKP). Castling never arises in these endgames.
+
+### 3-piece results
+
+From `warpmate-gen --all3` (Apple M1, all cores):
+
+| Endgame | Rounds | Time | White to move | Longest forced mate |
+|---|---|---|---|---|
+| KQvK | 21 | 0.25 s | 144,508 wins | 10 moves |
+| KRvK | 33 | 0.33 s | 175,168 wins | 16 moves |
+| KBvK | 2 | 0.04 s | 193,284 draws | none |
+| KNvK | 2 | 0.04 s | 205,496 draws | none |
+| KPvK | 57 | 0.26 s | 124,960 wins, 38,368 draws | 28 moves |
+
+All five tables match Syzygy on every legal position ([verification.md](verification.md)).
+
 ## Correctness checks
 
 The test suite (`tests/test_solver.cpp`) checks:
@@ -80,6 +123,16 @@ The test suite (`tests/test_solver.cpp`) checks:
 - tables survive a save/load round trip
 - the multithreaded solver (1, 3 and 8 threads) produces the identical table
 - the GPU solver produces a table byte-for-byte identical to the CPU's (`tests/test_gpu.cpp`, built with CUDA)
+
+The general solver's tests (`tests/test_egtb.cpp`) check:
+
+- knight, bishop, queen and pawn attacks, including board edges
+- material parsing, canonical form and dependency lists
+- move generation: pawn pushes, promotions (four choices) and pinned pieces
+- the general KRvK table is byte-for-byte identical to the specialized solver's
+- known results: KQvK longest mate 10 moves, KRvK 16, KBvK and KNvK all draws
+- colour-flipped lookups give the same value as the original position
+- every entry of all five 3-piece tables agrees with its children, including children in other tables
 
 An independent check against the Syzygy tablebases is provided by `scripts/verify_syzygy.py`: all 399,112 legal KRvK positions match, with 0 mismatches ([verification.md](verification.md)).
 
