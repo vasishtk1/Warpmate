@@ -13,7 +13,7 @@ Setup:
     pip install -r scripts/requirements.txt
     mkdir -p syzygy
     # download KRvK.rtbw into syzygy/, e.g. from
-    # https://tablebase.lichess.ovh/tables/standard/3-4-5/
+    # https://tablebase.lichess.ovh/tables/standard/3-4-5-wdl/
 
 Usage:
     python scripts/verify_syzygy.py --syzygy syzygy

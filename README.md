@@ -40,7 +40,7 @@ flowchart LR
 - **CPU reference solver** in C++ for king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate ✅
 - **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play ✅
 - **CUDA solver** with successive optimizations: a parallel sweep, backward move generation, and board-symmetry compression *(planned)*
-- **Verification** of every position against the public Syzygy tablebases *(script ready, results pending)*
+- **Verified against Syzygy**: all 399,112 legal KRvK positions match the official tablebases, with 0 mismatches ✅
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
 - **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*
@@ -108,4 +108,6 @@ See [docs/solver.md](docs/solver.md) for how the solver works.
 
 ## Results
 
-Benchmarks, verification, and model accuracy results will be published here once measured.
+**Correctness (KRvK, CPU solver):** every one of the 399,112 legal positions matches the Syzygy tablebases (0 mismatches), and the longest forced mate is 16 moves, the known value. See [docs/verification.md](docs/verification.md).
+
+GPU benchmarks and model accuracy will be published here once measured.

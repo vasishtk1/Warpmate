@@ -59,7 +59,7 @@ The test suite (`tests/test_solver.cpp`) checks:
 - **every entry is consistent with its children**: a win in *n* has a child lost in exactly *n* − 1, a loss in *n* has only won children with the slowest at *n* − 1, and a draw has no lost child and at least one non-won child
 - tables survive a save/load round trip
 
-An independent check against the Syzygy tablebases is provided by `scripts/verify_syzygy.py`.
+An independent check against the Syzygy tablebases is provided by `scripts/verify_syzygy.py`: all 399,112 legal KRvK positions match, with 0 mismatches ([verification.md](verification.md)).
 
 ## KRvK results
 
