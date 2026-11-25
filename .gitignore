@@ -1,0 +1,18 @@
+# Build output
+build/
+
+# Generated tablebases (rebuild with warpmate-solve)
+tables/
+
+# Downloaded Syzygy files
+syzygy/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
