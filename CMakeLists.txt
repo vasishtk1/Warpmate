@@ -65,6 +65,11 @@ target_link_libraries(warpmate-solve PRIVATE ${WARPMATE_SOLVER_LIBS})
 add_executable(warpmate-probe tools/probe.cpp)
 target_link_libraries(warpmate-probe PRIVATE warpmate_core)
 
+# CUDA learning examples
+if(WARPMATE_HAS_CUDA)
+  add_executable(cuda-basics examples/cuda_basics/basics.cu)
+endif()
+
 # Tests
 enable_testing()
 
