@@ -42,6 +42,8 @@ message(STATUS "Warpmate GPU support: ${WARPMATE_HAS_CUDA}")
 # Shared chess and solver code.
 add_library(warpmate_core
   src/core/notation.cpp
+  src/egtb/notation.cpp
+  src/egtb/solver.cpp
   src/io/tablebase.cpp
   src/solver/krk_solver.cpp
 )
@@ -65,6 +67,9 @@ target_link_libraries(warpmate-solve PRIVATE ${WARPMATE_SOLVER_LIBS})
 add_executable(warpmate-probe tools/probe.cpp)
 target_link_libraries(warpmate-probe PRIVATE warpmate_core)
 
+add_executable(warpmate-gen tools/gen.cpp)
+target_link_libraries(warpmate-gen PRIVATE warpmate_core)
+
 add_executable(warpmate-bench tools/bench.cpp)
 target_link_libraries(warpmate-bench PRIVATE ${WARPMATE_SOLVER_LIBS})
 
@@ -83,6 +88,10 @@ add_test(NAME core COMMAND warpmate-test-core)
 add_executable(warpmate-test-solver tests/test_solver.cpp)
 target_link_libraries(warpmate-test-solver PRIVATE warpmate_core)
 add_test(NAME solver COMMAND warpmate-test-solver)
+
+add_executable(warpmate-test-egtb tests/test_egtb.cpp)
+target_link_libraries(warpmate-test-egtb PRIVATE warpmate_core)
+add_test(NAME egtb COMMAND warpmate-test-egtb)
 
 if(WARPMATE_HAS_CUDA)
   add_executable(warpmate-test-gpu tests/test_gpu.cpp)
