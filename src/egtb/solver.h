@@ -26,9 +26,19 @@ Material canonical(Material m);
 // canonical form, excluding king vs king.
 std::vector<Material> direct_dependencies(const Material& m);
 
+// How each round chooses which positions to check.
+enum class Algorithm {
+    kFullScan,  // check every unsolved position, every round (the original)
+    kFrontier,  // check only positions that can change this round (see retro.h)
+};
+
+const char* algorithm_name(Algorithm a);
+
+// What one round did: how many positions it ran the per-position step on,
+// and how many of those it solved.
 struct RoundStats {
-    int ply;
-    uint64_t newly_solved;
+    uint64_t checked = 0;
+    uint64_t solved = 0;
 };
 
 struct TableResult {
@@ -36,6 +46,7 @@ struct TableResult {
     std::vector<Value> values;
     int rounds = 0;
     double seconds = 0.0;
+    std::vector<RoundStats> round_stats;  // one entry per round, round 1 first
 };
 
 struct TableSummary {
@@ -53,7 +64,8 @@ TableSummary summarize(const Material& m, const std::vector<Value>& values);
 // once. Solving a material first solves everything it depends on.
 class Solver {
 public:
-    explicit Solver(int threads = 0) : threads_(threads) {}
+    explicit Solver(int threads = 0, Algorithm algorithm = Algorithm::kFrontier)
+        : threads_(threads), algorithm_(algorithm) {}
 
     // Called when a table finishes (e.g. to print or save it).
     std::function<void(const TableResult&)> on_table;
@@ -68,7 +80,10 @@ public:
 
 private:
     TableResult solve_one(const Material& m);
+    void solve_full_scan(const Context& ctx, int max_sub, int threads, TableResult* result);
+    void solve_frontier(const Context& ctx, int max_sub, int threads, TableResult* result);
     int threads_;
+    Algorithm algorithm_;
     std::map<std::string, TableResult> tables_;
 };
 

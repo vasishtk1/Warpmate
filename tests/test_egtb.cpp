@@ -1,13 +1,14 @@
-// Tests for the solver: piece attacks, indexing, move generation, notation,
-// material handling, colour flipping, known results for every 3-piece
-// endgame, the multithreaded solver, saving tables, and a full consistency
-// check of every table entry.
+// Tests for the solver: piece attacks, indexing, move generation, un-moves,
+// notation, material handling, colour flipping, known results for every
+// 3-piece endgame, the frontier and multithreaded solvers, saving tables,
+// and a full consistency check of every table entry.
 #include <cstdio>
 #include <string>
 
 #include "check.h"
 #include "egtb/notation.h"
 #include "egtb/solver.h"
+#include "egtb/unmove.h"
 #include "io/tablebase.h"
 
 using namespace wm;
@@ -240,6 +241,108 @@ void test_consistency(const Solver& s, const char* name) {
     CHECK(bad == 0);
 }
 
+// Un-moves must be the exact reverse of moves that stay in the table:
+//   forward:  every such move P -> Q appears among Q's un-moves
+//   backward: every un-move Q <- P is a real move of P
+// Checks every `stride`-th position (stride 1 = all of them).
+struct HasParent {
+    const Material* m;
+    uint64_t want;
+    bool found = false;
+    bool operator()(const Position& p) {
+        if (encode(*m, p) == want) found = true;
+        return !found;
+    }
+};
+
+struct HasChild {
+    const Material* m;
+    const Position* p;
+    uint64_t want;
+    bool found = false;
+    bool operator()(const Move& mv) {
+        if (mv.captured != kNone || mv.promo != kNone) return true;
+        Position q = *p;
+        q.sq[mv.piece] = mv.to;
+        q.stm ^= 1;
+        if (encode(*m, q) == want) found = true;
+        return !found;
+    }
+};
+
+void test_unmoves(const char* name, uint64_t stride) {
+    const Material m = mat(name);
+    uint64_t moves = 0, unmoves = 0, bad = 0;
+    for (uint64_t i = 0; i < table_size(m) && bad < 5; i += stride) {
+        const Position p = decode(m, i);
+        if (!is_valid(m, p)) continue;
+        // Forward: each quiet move from p must be undone back to p.
+        struct Forward {
+            const Material* m;
+            const Position* p;
+            uint64_t* moves;
+            uint64_t* bad;
+            bool operator()(const Move& mv) {
+                if (mv.captured != kNone || mv.promo != kNone) return true;
+                Position q = *p;
+                q.sq[mv.piece] = mv.to;
+                q.stm ^= 1;
+                HasParent h{m, encode(*m, *p)};
+                for_each_unmove(*m, q, h);
+                ++*moves;
+                if (!h.found) ++*bad;
+                return true;
+            }
+        } fwd{&m, &p, &moves, &bad};
+        for_each_move(m, p, fwd);
+        // Backward: each parent of p must have a move to p.
+        struct Backward {
+            const Material* m;
+            const Position* q;
+            uint64_t* unmoves;
+            uint64_t* bad;
+            bool operator()(const Position& parent) {
+                HasChild h{m, &parent, encode(*m, *q)};
+                for_each_move(*m, parent, h);
+                ++*unmoves;
+                if (!h.found) ++*bad;
+                return true;
+            }
+        } back{&m, &p, &unmoves, &bad};
+        for_each_unmove(m, p, back);
+    }
+    if (bad) std::printf("  %s: %llu un-move mismatches\n", name, static_cast<unsigned long long>(bad));
+    CHECK(bad == 0);
+    CHECK(moves > 0 && unmoves > 0);
+    // Over a whole table, every quiet move is counted once in each direction.
+    if (stride == 1) CHECK(moves == unmoves);
+}
+
+// The frontier solver must give exactly the same tables, rounds, and number
+// of positions solved per round as the original full scan, while checking
+// fewer positions.
+void test_frontier_matches(const Solver& frontier) {
+    Solver full(0, Algorithm::kFullScan);
+    for (const Material& m : all_three_piece()) {
+        const std::string name = material_name(m);
+        const TableResult& a = full.solve(m);
+        const TableResult& b = frontier.tables().at(name);
+        CHECK(a.values == b.values);
+        CHECK(a.rounds == b.rounds);
+        CHECK(a.round_stats.size() == b.round_stats.size());
+        uint64_t checked_full = 0, checked_frontier = 0;
+        for (size_t r = 0; r < a.round_stats.size() && r < b.round_stats.size(); ++r) {
+            CHECK(a.round_stats[r].solved == b.round_stats[r].solved);
+            checked_full += a.round_stats[r].checked;
+            checked_frontier += b.round_stats[r].checked;
+        }
+        CHECK(checked_frontier <= checked_full);
+        std::printf("  %-5s positions checked: full scan %llu, frontier %llu\n", name.c_str(),
+                    static_cast<unsigned long long>(checked_full),
+                    static_cast<unsigned long long>(checked_frontier));
+    }
+}
+
 // Any number of threads must give exactly the same tables. KPvK also
 // exercises lookups into the four tables a promotion can reach.
 void test_threads_match(const Solver& reference) {
@@ -275,6 +378,9 @@ int main() {
     test_material();
     test_move_generation();
     test_notation();
+    for (const char* name : {"KRvK", "KQvK", "KBvK", "KNvK", "KPvK"}) test_unmoves(name, 1);
+    // 4-piece: every 97th position (about 346,000 per table).
+    for (const char* name : {"KQvKR", "KRvKP", "KRvKN", "KPvKP", "KBvKN"}) test_unmoves(name, 97);
 
     Solver solver;
     for (const Material& m : all_three_piece()) solver.solve(m);
@@ -282,6 +388,7 @@ int main() {
     test_krvk_counts(solver);
     test_known_results(solver);
     test_lookups(solver);
+    test_frontier_matches(solver);
     test_threads_match(solver);
     test_save_load(solver);
     for (const char* name : {"KQvK", "KRvK", "KBvK", "KNvK", "KPvK"}) {

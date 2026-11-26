@@ -1,11 +1,15 @@
 #include "egtb/solver.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 
 #include "egtb/retro.h"
+#include "egtb/unmove.h"
 
 namespace wm::egtb {
 
@@ -186,6 +190,10 @@ const TableResult& Solver::solve(const Material& requested) {
     return stored;
 }
 
+const char* algorithm_name(Algorithm a) {
+    return a == Algorithm::kFullScan ? "full scan" : "frontier";
+}
+
 TableResult Solver::solve_one(const Material& m) {
     const int threads =
         threads_ > 0 ? threads_ : static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
@@ -213,36 +221,11 @@ TableResult Solver::solve_one(const Material& m) {
         for (uint64_t i = begin; i < end; ++i) table[i] = init_value(ctx, i);
     });
 
-    // Rounds read one buffer and write a copy. Updating in place is safe in
-    // principle (see the parity argument in docs/solver.md), but threads
-    // reading and writing the same bytes at once is undefined behaviour in
-    // standard C++, so the CPU version double-buffers. The GPU solver updates
-    // in place.
-    std::vector<Value> next(size);
-    std::vector<uint64_t> changed(threads);
-    int ply = 1;
-    for (; ply < kDraw; ++ply) {
-        next = result.values;
-        const Value* src = result.values.data();
-        Value* dst = next.data();
-        parallel_for(size, threads, [&](uint64_t begin, uint64_t end, int t) {
-            uint64_t count = 0;
-            for (uint64_t i = begin; i < end; ++i) {
-                if (src[i] != kUnknown) continue;
-                const Value v = retro_step(ctx, src, i, ply);
-                if (v != kUnknown) {
-                    dst[i] = v;
-                    ++count;
-                }
-            }
-            changed[t] = count;
-        });
-        result.values.swap(next);
-        uint64_t total = 0;
-        for (uint64_t c : changed) total += c;
-        if (total == 0 && ply > max_sub + 1) break;
+    if (algorithm_ == Algorithm::kFullScan) {
+        solve_full_scan(ctx, max_sub, threads, &result);
+    } else {
+        solve_frontier(ctx, max_sub, threads, &result);
     }
-    result.rounds = ply;
 
     for (Value& v : result.values) {
         if (v == kUnknown) v = kDraw;
@@ -250,6 +233,134 @@ TableResult Solver::solve_one(const Material& m) {
     result.seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     return result;
+}
+
+// The original algorithm: every round checks every unsolved position.
+void Solver::solve_full_scan(const Context& ctx, int max_sub, int threads, TableResult* result) {
+    const uint64_t size = result->values.size();
+    // Rounds read one buffer and write a copy. Updating in place is safe in
+    // principle (see the parity argument in docs/solver.md), but threads
+    // reading and writing the same bytes at once is undefined behaviour in
+    // standard C++, so the CPU version double-buffers. The GPU solver updates
+    // in place.
+    std::vector<Value> next(size);
+    std::vector<RoundStats> per_thread(threads);
+    int ply = 1;
+    for (; ply < kDraw; ++ply) {
+        next = result->values;
+        const Value* src = result->values.data();
+        Value* dst = next.data();
+        parallel_for(size, threads, [&](uint64_t begin, uint64_t end, int t) {
+            RoundStats stats;
+            for (uint64_t i = begin; i < end; ++i) {
+                if (src[i] != kUnknown) continue;
+                ++stats.checked;
+                const Value v = retro_step(ctx, src, i, ply);
+                if (v != kUnknown) {
+                    dst[i] = v;
+                    ++stats.solved;
+                }
+            }
+            per_thread[t] = stats;
+        });
+        result->values.swap(next);
+        RoundStats total;
+        for (const RoundStats& s : per_thread) {
+            total.checked += s.checked;
+            total.solved += s.solved;
+        }
+        result->round_stats.push_back(total);
+        if (total.solved == 0 && ply > max_sub + 1) break;
+    }
+    result->rounds = ply;
+}
+
+// The faster algorithm: a round only checks positions that can change in it
+// (see "Frontier solving" in retro.h). Produces exactly the same table.
+void Solver::solve_frontier(const Context& ctx, int max_sub, int threads, TableResult* result) {
+    const uint64_t size = result->values.size();
+    if (size > UINT32_MAX) throw std::runtime_error("table too large for 32-bit position lists");
+    Value* table = result->values.data();
+
+    // Rounds at which a capture or promotion can decide each position.
+    std::vector<uint8_t> win_round(size, 0), loss_round(size, 0);
+    // mark[i] == ply: a child of position i was solved in round ply-1.
+    // Several threads may mark the same parent at once, so the marks are
+    // atomic (relaxed: only the value matters, not the ordering).
+    std::unique_ptr<std::atomic<uint8_t>[]> mark(new std::atomic<uint8_t>[size]);
+    parallel_for(size, threads, [&](uint64_t begin, uint64_t end, int) {
+        for (uint64_t i = begin; i < end; ++i) {
+            mark[i].store(0, std::memory_order_relaxed);
+            if (table[i] == kUnknown && ctx.num_subs > 0) {
+                sub_triggers(ctx, table, i, &win_round[i], &loss_round[i]);
+            }
+        }
+    });
+
+    // Positions solved in the previous round. Round 0 solved the checkmates.
+    std::vector<uint32_t> frontier;
+    for (uint64_t i = 0; i < size; ++i) {
+        if (table[i] == 0) frontier.push_back(static_cast<uint32_t>(i));
+    }
+
+    std::vector<std::vector<uint32_t>> solved(threads);
+    std::vector<uint64_t> checked(threads);
+    int ply = 1;
+    for (; ply < kDraw; ++ply) {
+        // 1. Mark the parents of everything solved last round.
+        const auto round = static_cast<uint8_t>(ply);
+        parallel_for(frontier.size(), threads, [&](uint64_t begin, uint64_t end, int) {
+            struct MarkParents {
+                const Material* m;
+                const Value* table;
+                std::atomic<uint8_t>* mark;
+                uint8_t round;
+                bool operator()(const Position& p) {
+                    const uint64_t index = encode(*m, p);
+                    if (table[index] == kUnknown) mark[index].store(round, std::memory_order_relaxed);
+                    return true;
+                }
+            } visit{&ctx.m, table, mark.get(), round};
+            for (uint64_t k = begin; k < end; ++k) {
+                for_each_unmove(ctx.m, decode(ctx.m, frontier[k]), visit);
+            }
+        });
+
+        // 2. Check only the positions that can change this round. Results
+        // are collected first and written afterwards, so no thread reads a
+        // value written in this round.
+        parallel_for(size, threads, [&](uint64_t begin, uint64_t end, int t) {
+            solved[t].clear();
+            uint64_t count = 0;
+            for (uint64_t i = begin; i < end; ++i) {
+                if (table[i] != kUnknown) continue;
+                if (mark[i].load(std::memory_order_relaxed) != round && win_round[i] != round &&
+                    loss_round[i] != round) {
+                    continue;
+                }
+                ++count;
+                if (retro_step(ctx, table, i, ply) != kUnknown) {
+                    solved[t].push_back(static_cast<uint32_t>(i));
+                }
+            }
+            checked[t] = count;
+        });
+
+        // 3. Write this round's results; they become the next frontier.
+        RoundStats total;
+        frontier.clear();
+        for (int t = 0; t < threads; ++t) {
+            total.checked += checked[t];
+            for (uint32_t i : solved[t]) {
+                table[i] = round;
+                frontier.push_back(i);
+            }
+        }
+        total.solved = frontier.size();
+        result->round_stats.push_back(total);
+        if (total.solved == 0 && ply > max_sub + 1) break;
+    }
+    result->rounds = ply;
 }
 
 std::vector<Material> all_three_piece() {
