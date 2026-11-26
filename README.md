@@ -37,10 +37,10 @@ flowchart LR
 
 ## Features
 
-- **CPU reference solver** in C++ for king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate *(done)*
+- **CPU solver** in C++ (multithreaded), the reference the GPU is checked against. First case, king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate *(done)*
 - **General solver** for any endgame of up to 4 pieces (all piece types, pawns and promotion), with linked tables for captures and promotions *(done)*
 - **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play *(done)*
-- **CUDA solver** (v1: one GPU thread per position): produces a table byte-for-byte identical to the CPU's, about 66× faster than the best CPU result on the same machine *(done)*
+- **CUDA solver** (v1: one GPU thread per position): produces a table byte-for-byte identical to the CPU's, about 66× faster than the best CPU result on the same machine (KRvK, measured with the first KRvK-only version) *(done)*
 - **4-piece endgames on the GPU**, then faster CUDA versions with backward move generation and board-symmetry compression *(planned)*
 - **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames match the official tablebases, with 0 mismatches *(done)*
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
@@ -66,16 +66,14 @@ flowchart LR
 Warpmate/
 ├── CMakeLists.txt         Build configuration
 ├── src/
-│   ├── core/              Bitboards and piece attacks; KRvK positions and moves (CPU + GPU)
-│   ├── solver/            KRvK solver: per-position step, CPU drivers (1 thread, multithreaded)
-│   ├── egtb/              General solver: any material, linked tables, CPU driver
+│   ├── core/              Bitboards, piece attacks and stored values (CPU + GPU)
+│   ├── egtb/              Solver: positions, moves, per-position step, linked tables, CPU driver
 │   ├── gpu/               CUDA solver: kernels and GPU memory management
 │   └── io/                Tablebase file format
 ├── tools/
-│   ├── solve.cpp          warpmate-solve: build the KRvK table (CPU or --gpu)
 │   ├── gen.cpp            warpmate-gen: solve any endgame (and its dependencies)
 │   ├── probe.cpp          warpmate-probe: look up any solved position
-│   └── bench.cpp          warpmate-bench: time every solver and check they agree
+│   └── bench.cpp          warpmate-bench: time CPU vs GPU and check they agree
 ├── tests/                 Unit, consistency, and CPU-vs-GPU tests
 ├── examples/
 │   └── cuda_basics/       Introductory CUDA programs
@@ -97,11 +95,11 @@ ctest --test-dir build          # run the tests
 ./build/warpmate-gen --all3     # solve every 3-piece endgame into tables/
 ./build/warpmate-probe "8/8/8/8/8/2k5/1R6/K7 w - - 0 1"
 
-./build/warpmate-solve --gpu    # solve KRvK on the GPU
-./build/warpmate-bench          # time CPU vs GPU
+./build/warpmate-gen --gpu KQvKR   # solve on the GPU (CUDA builds only)
+./build/warpmate-bench KQvKR       # time CPU vs GPU
 ```
 
-No NVIDIA GPU? Open [`notebooks/phase2_gpu_solver.ipynb`](notebooks/phase2_gpu_solver.ipynb) in Google Colab with a free T4 GPU.
+No NVIDIA GPU? Open [`notebooks/step6b_4piece_gpu.ipynb`](notebooks/step6b_4piece_gpu.ipynb) in Google Colab with a free T4 GPU.
 
 Example probe output (abridged):
 

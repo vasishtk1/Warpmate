@@ -1,13 +1,14 @@
-// Tests for the general solver: piece attacks, material handling, colour
-// flipping, agreement with the KRvK solver, known results for every 3-piece
-// endgame, and a full consistency check of every table entry.
+// Tests for the solver: piece attacks, indexing, move generation, notation,
+// material handling, colour flipping, known results for every 3-piece
+// endgame, the multithreaded solver, saving tables, and a full consistency
+// check of every table entry.
 #include <cstdio>
 #include <string>
 
 #include "check.h"
 #include "egtb/notation.h"
 #include "egtb/solver.h"
-#include "solver/krk_solver.h"
+#include "io/tablebase.h"
 
 using namespace wm;
 using namespace wm::egtb;
@@ -22,7 +23,23 @@ Material mat(const char* name) {
     return m;
 }
 
+// Builds a Material + Position from a FEN.
+void from_fen(const char* fen, Material* m, Position* p) {
+    auto b = parse_fen(fen);
+    CHECK(b.has_value());
+    if (b) to_position(*b, m, p);
+}
+
 void test_attacks() {
+    CHECK(popcount(king_attacks(0)) == 3);   // a1 corner
+    CHECK(popcount(king_attacks(7)) == 3);   // h1 corner, no wrap to a2
+    CHECK(popcount(king_attacks(4)) == 5);   // e1 edge
+    CHECK(popcount(king_attacks(28)) == 8);  // e4 centre
+    CHECK(!(king_attacks(7) & bb(8)));       // h1 must not "see" a2
+    CHECK(popcount(rook_attacks(0, 0)) == 14);      // empty board: always 14
+    CHECK(popcount(rook_attacks(0, bb(24))) == 10); // a1, blocker on a4
+    CHECK(rook_attacks(0, bb(24)) & bb(24));        // blocker square included
+    CHECK(!(rook_attacks(0, bb(24)) & bb(32)));     // nothing beyond it
     CHECK(popcount(knight_attacks(0)) == 2);    // a1
     CHECK(popcount(knight_attacks(27)) == 8);   // d4
     CHECK(popcount(knight_attacks(7)) == 2);    // h1, no wrap-around
@@ -58,12 +75,47 @@ void test_material() {
     CHECK(has_kqvkr && has_kpvk);
 }
 
+void test_encode_decode() {
+    const Material m = mat("KRvK");
+    for (uint64_t i = 0; i < table_size(m); ++i) {
+        if (encode(m, decode(m, i)) != i) {
+            CHECK(encode(m, decode(m, i)) == i);
+            return;
+        }
+    }
+}
+
+void test_validity() {
+    Material m;
+    Position p;
+    from_fen("7k/8/6K1/8/8/8/8/R7 w - - 0 1", &m, &p);
+    CHECK(is_valid(m, p));
+    from_fen("8/8/8/8/8/8/8/RKk5 w - - 0 1", &m, &p);   // kings touching
+    CHECK(!is_valid(m, p));
+    from_fen("R6k/8/6K1/8/8/8/8/8 w - - 0 1", &m, &p);  // Black in check, White to move
+    CHECK(!is_valid(m, p));
+    from_fen("R6k/8/6K1/8/8/8/8/8 b - - 0 1", &m, &p);  // same, Black to move: fine
+    CHECK(is_valid(m, p));
+}
+
 void test_move_generation() {
+    Material m;
+    Position p;
+    // Checkmate: no moves, in check. Stalemate: no moves, not in check.
+    from_fen("R6k/8/6K1/8/8/8/8/8 b - - 0 1", &m, &p);
+    CHECK(count_moves(m, p) == 0 && in_check(m, p, p.stm));
+    from_fen("8/8/8/8/8/1K6/1R6/k7 b - - 0 1", &m, &p);
+    CHECK(count_moves(m, p) == 0 && !in_check(m, p, p.stm));
+    // Undefended rook next to the black king: capturing it is the only move.
+    from_fen("7K/8/8/8/8/8/1R6/k7 b - - 0 1", &m, &p);
+    CHECK(count_moves(m, p) == 1);
+    // White Ra1, Ke1: rook a2..a8 (7) + b1..d1 (3) = 10, king 5. Total 15.
+    from_fen("7k/8/8/8/8/8/8/R3K3 w - - 0 1", &m, &p);
+    CHECK(count_moves(m, p) == 15);
+
     // White pawn on e2 with an empty path: e3 and e4.
     auto b = parse_fen("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
     CHECK(b.has_value());
-    Material m;
-    Position p;
     to_position(*b, &m, &p);
     // King on e1: d1, f1, d2, f2 (e2 is its own pawn) = 4, pawn: 2.
     CHECK(count_moves(m, p) == 6);
@@ -80,12 +132,27 @@ void test_move_generation() {
     CHECK(count_moves(m, p) == 4);
 }
 
-void test_matches_krk_solver(const Solver& s) {
-    // The general solver uses the same row layout as the KRvK-only solver,
-    // so the two tables must be byte-for-byte identical.
-    const auto& general = s.tables().at("KRvK").values;
-    const auto specific = krk::solve().table;
-    CHECK(general == specific);
+void test_notation() {
+    const char* fen = "7k/8/6K1/8/8/8/8/R7 w - - 0 1";
+    Material m;
+    Position p;
+    from_fen(fen, &m, &p);
+    CHECK(to_fen(to_board(m, p)) == fen);
+    // Piece 1 is the rook (canonical order is K, R, k): a1 to a8.
+    const Move ra8{1, 0, 56, kNone, kNone};
+    CHECK(move_to_string(m, p, ra8) == "Ra8#");
+    std::string err;
+    CHECK(!parse_fen("8/8/8/8/8/8/8/8 w - - 0 1", &err).has_value());  // no kings
+}
+
+// KRvK counts, checked against the original KRvK-only solver (byte-identical
+// tables) and Syzygy before that solver was removed.
+void test_krvk_counts(const Solver& s) {
+    const TableSummary t = summarize(mat("KRvK"), s.tables().at("KRvK").values);
+    CHECK(t.invalid == 125176);
+    CHECK(t.wins[kWhite] == 175168 && t.draws[kWhite] == 0 && t.losses[kWhite] == 0);
+    CHECK(t.wins[kBlack] == 0 && t.draws[kBlack] == 22244 && t.losses[kBlack] == 201700);
+    CHECK(s.tables().at("KRvK").rounds == 33);
 }
 
 void test_known_results(const Solver& s) {
@@ -117,6 +184,10 @@ void test_lookups(const Solver& s) {
     // Mate in 1 with the rook, and the same position with colours swapped
     // and the board mirrored (Black has the rook): must give the same value.
     CHECK(value("7k/8/6K1/8/8/8/8/R7 w - - 0 1") == 1);
+    CHECK(value("R6k/8/6K1/8/8/8/8/8 b - - 0 1") == 0);       // checkmated
+    CHECK(value("8/8/8/8/8/1K6/1R6/k7 b - - 0 1") == kDraw);  // stalemate
+    CHECK(value("7K/8/8/8/8/8/1R6/k7 b - - 0 1") == kDraw);   // rook falls
+    CHECK(value("8/8/8/8/8/8/8/RKk5 w - - 0 1") == kInvalid); // kings touching
     CHECK(value("r7/8/8/8/8/6k1/8/7K b - - 0 1") == 1);
     // King + pawn: White Kd6, Pd5, Black Kd8, White to move wins
     // (the classic "king in front of the pawn" case).
@@ -169,19 +240,50 @@ void test_consistency(const Solver& s, const char* name) {
     CHECK(bad == 0);
 }
 
+// Any number of threads must give exactly the same tables. KPvK also
+// exercises lookups into the four tables a promotion can reach.
+void test_threads_match(const Solver& reference) {
+    for (int threads : {1, 3, 8}) {
+        Solver s(threads);
+        for (const char* name : {"KRvK", "KPvK"}) {
+            const TableResult& t = s.solve(mat(name));
+            const TableResult& r = reference.tables().at(name);
+            CHECK(t.values == r.values);
+            CHECK(t.rounds == r.rounds);
+        }
+    }
+}
+
+void test_save_load(const Solver& s) {
+    const auto& values = s.tables().at("KRvK").values;
+    const std::string path = "warpmate_test_table.wmtb";
+    std::string error;
+    CHECK(save_tablebase(path, Tablebase{"KRvK", values}, &error));
+    Tablebase loaded;
+    CHECK(load_tablebase(path, &loaded, &error));
+    CHECK(loaded.name == "KRvK");
+    CHECK(loaded.values == values);
+    std::remove(path.c_str());
+}
+
 }  // namespace
 
 int main() {
     test_attacks();
+    test_encode_decode();
+    test_validity();
     test_material();
     test_move_generation();
+    test_notation();
 
     Solver solver;
     for (const Material& m : all_three_piece()) solver.solve(m);
 
-    test_matches_krk_solver(solver);
+    test_krvk_counts(solver);
     test_known_results(solver);
     test_lookups(solver);
+    test_threads_match(solver);
+    test_save_load(solver);
     for (const char* name : {"KQvK", "KRvK", "KBvK", "KNvK", "KPvK"}) {
         test_consistency(solver, name);
     }

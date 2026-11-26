@@ -1,7 +1,7 @@
 # Solver design
 
 How Warpmate solves an endgame, using king + rook vs king (KRvK) as the first case.
-The CPU solver described here is the reference implementation that the CUDA solver will be checked against.
+The CPU solver described here is the reference implementation that the CUDA solver is checked against.
 
 ## Board representation
 
@@ -48,27 +48,28 @@ Because rounds run in increasing order, the first round in which a position qual
 
 Each position's update reads only its children's values and writes only its own entry. Updates can even be written in place while other positions are being processed: odd rounds only write odd values and only read even ones, and even rounds the reverse, so no write in a round can change another position's decision in that same round. This makes every position in a round independent, which maps directly to one GPU thread per position.
 
-The per-position logic (`init_value`, `retro_step` in `src/solver/krk_retro.h`) and all chess logic are marked `WM_HD`, which expands to `__host__ __device__` under nvcc. The same code is shared by the CPU solver and the CUDA kernels.
+The per-position logic (`init_value`, `retro_step` in `src/egtb/retro.h`) and all chess logic are marked `WM_HD`, which expands to `__host__ __device__` under nvcc. The same code is shared by the CPU solver and the CUDA kernels.
 
 ## Implementations
 
-All three share `init_value` and `retro_step`; they differ only in how positions are distributed.
+Both share `init_value` and `retro_step`; they differ only in how positions are distributed.
 
 | Solver | Where | How a round runs |
 |---|---|---|
-| `solve` | `src/solver/krk_solver.cpp` | one CPU thread loops over all positions, updating the table in place |
-| `solve_parallel` | `src/solver/krk_solver.cpp` | positions split into contiguous ranges across CPU threads; reads from one buffer and writes to a copy, since concurrent read/write of the same bytes is undefined behaviour in standard C++ |
-| `solve_gpu` | `src/gpu/krk_gpu.cu` | one CUDA thread per position (2,048 blocks × 256 threads); the table is updated in place on the GPU, safe by the parity argument above |
+| `Solver` | `src/egtb/solver.cpp` | positions split into contiguous ranges across CPU threads (1 thread is also supported); reads from one buffer and writes to a copy, since concurrent read/write of the same bytes is undefined behaviour in standard C++ |
+| `GpuSolver` | `src/gpu/egtb_gpu.cu` | one CUDA thread per position (256 threads per block); the table is updated in place on the GPU, safe by the parity argument above |
+
+The project started with separate solvers written only for KRvK. They were removed once the general solver below produced byte-for-byte identical KRvK tables.
 
 ### GPU solver (v1)
 
 - **Kernels:** `init_kernel` (round 0), `step_kernel` (one round), `finalize_kernel` (turns unsolved positions into draws).
 - **Host loop:** for each round, reset a device counter, launch `step_kernel`, then copy the counter back. That copy also synchronizes with the kernel, and the loop stops when a round solves nothing.
 - **Counters** (positions changed, checkmates, stalemates) are updated with `atomicAdd`.
-- **Data movement:** the table stays on the GPU for the whole solve; only a 4-byte counter crosses each round, and the 0.5 MB table is copied back once.
+- **Data movement:** the table stays on the GPU for the whole solve; only a small counter crosses each round, and the finished table is copied back once.
 - **Error handling:** every CUDA API call is checked, and kernel launches are checked with `cudaGetLastError`.
 
-Profiling shows `step_kernel` accounts for ~98% of GPU time, mainly because every round revisits all 524,288 positions even though most are already solved (see [benchmarks.md](benchmarks.md)).
+Profiling the first (KRvK-only) GPU version showed `step_kernel` accounts for ~98% of GPU time, mainly because every round revisits all 524,288 positions even though most are already solved (see [benchmarks.md](benchmarks.md)).
 
 ## General solver (any material)
 
@@ -76,7 +77,7 @@ Profiling shows `step_kernel` accounts for ~98% of GPU time, mainly because ever
 
 ### Material and canonical form
 
-A **material** such as `KQvKR` lists the pieces in canonical order: white king, other white pieces strongest first (Q, R, B, N, P), then the same for Black. A position stores one square per piece in that order, and the row index is `[stm][sq0][sq1]...`, the same layout as the KRvK solver. The general KRvK table is therefore byte-for-byte identical to the specialized one, which the tests check.
+A **material** such as `KQvKR` lists the pieces in canonical order: white king, other white pieces strongest first (Q, R, B, N, P), then the same for Black. A position stores one square per piece in that order, and the row index is `[stm][sq0][sq1]...`, the same layout as the KRvK solver. The general KRvK table was therefore byte-for-byte identical to the original KRvK-only solver's.
 
 Each endgame is stored once, **with the stronger side as White**. A position where Black has the extra material is looked up by swapping colours, mirroring the board top-to-bottom (`square ^ 56`) and flipping the side to move. Values are measured from the side to move, so they carry over unchanged.
 
@@ -115,30 +116,25 @@ All five tables match Syzygy on every legal position ([verification.md](verifica
 
 ## Correctness checks
 
-The test suite (`tests/test_solver.cpp`) checks:
+The test suite (`tests/test_egtb.cpp`) checks:
 
-- known positions: checkmate, mate in 1, stalemate, a forced rook capture, an invalid position
-- the longest forced mate is **16 moves** (31 plies), the known result for KRvK
-- **every entry is consistent with its children**: a win in *n* has a child lost in exactly *n* − 1, a loss in *n* has only won children with the slowest at *n* − 1, and a draw has no lost child and at least one non-won child
+- king, rook, knight, bishop, queen and pawn attacks, including board edges
+- position encoding round trips, and which positions count as invalid
+- move generation: checkmate, stalemate, a forced rook capture, pawn pushes, promotions (four choices) and pinned pieces
+- FEN and move notation, material parsing, canonical form and dependency lists
+- known results: KQvK longest mate 10 moves, KRvK 16, KBvK and KNvK all draws, and the exact KRvK win/draw/loss counts below
+- known positions: checkmate, mate in 1, stalemate, an undefended rook, kings touching, and colour-flipped lookups giving the same value
+- 1, 3 and 8 CPU threads produce identical tables
 - tables survive a save/load round trip
-- the multithreaded solver (1, 3 and 8 threads) produces the identical table
-- the GPU solver produces a table byte-for-byte identical to the CPU's (`tests/test_gpu.cpp`, built with CUDA)
+- **every entry is consistent with its children** in all five 3-piece tables, including children in other tables: a win in *n* has a child lost in exactly *n* − 1, a loss in *n* has only won children with the slowest at *n* − 1, and a draw has no lost child and at least one non-won child
 
-The general solver's tests (`tests/test_egtb.cpp`) check:
+With CUDA, `tests/test_egtb_gpu.cpp` checks that the GPU solver produces tables byte-for-byte identical to the CPU's for all five 3-piece endgames.
 
-- knight, bishop, queen and pawn attacks, including board edges
-- material parsing, canonical form and dependency lists
-- move generation: pawn pushes, promotions (four choices) and pinned pieces
-- the general KRvK table is byte-for-byte identical to the specialized solver's
-- known results: KQvK longest mate 10 moves, KRvK 16, KBvK and KNvK all draws
-- colour-flipped lookups give the same value as the original position
-- every entry of all five 3-piece tables agrees with its children, including children in other tables
-
-An independent check against the Syzygy tablebases is provided by `scripts/verify_syzygy.py`: all 399,112 legal KRvK positions match, with 0 mismatches ([verification.md](verification.md)).
+An independent check against the Syzygy tablebases is provided by `scripts/verify_syzygy.py` ([verification.md](verification.md)).
 
 ## KRvK results
 
-Output of `warpmate-solve`:
+The solved KRvK table:
 
 | | Count |
 |---|---|

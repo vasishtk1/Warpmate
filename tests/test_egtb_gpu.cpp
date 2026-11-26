@@ -1,6 +1,6 @@
-// The general GPU solver must produce exactly the same tables as the CPU
-// solver. Covers all five 3-piece endgames (fast enough for a unit test);
-// 4-piece endgames are compared by warpmate-bench --egtb.
+// The GPU solver must produce exactly the same tables as the CPU solver.
+// Covers all five 3-piece endgames (fast enough for a unit test); 4-piece
+// endgames are compared by warpmate-bench.
 // Built only when CUDA is available.
 #include <cstdio>
 #include <exception>

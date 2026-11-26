@@ -4,7 +4,7 @@ Measured results only. Every solver must produce an identical table; the benchma
 
 ## KRvK solver: CPU vs GPU (GPU v1)
 
-Measured with `warpmate-bench --trials 5` (median of 5 runs). The GPU gets one untimed warm-up run first, so its one-off start-up cost (about 180 ms, mostly creating the CUDA context) isn't counted as solving time.
+Measured with the project's first solvers, which were written only for KRvK (median of 5 runs). Those solvers have since been replaced by the general solver, which produces the identical KRvK table; these numbers will be re-measured with it. The GPU gets one untimed warm-up run first, so its one-off start-up cost (about 180 ms, mostly creating the CUDA context) isn't counted as solving time.
 
 **Machine:** Google Colab, NVIDIA Tesla T4 (40 SMs, 15 GB), Intel Xeon @ 2.00 GHz (2 threads), CUDA 13.0
 
@@ -29,7 +29,7 @@ Measured with `warpmate-bench --trials 5` (median of 5 runs). The GPU gets one u
 
 ### Where the GPU time goes (Nsight Systems)
 
-Profile of one `warpmate-solve --gpu` run on the T4:
+Profile of one KRvK solve with the first GPU solver on the T4:
 
 | GPU activity | Count | Total time | Share |
 |---|---|---|---|

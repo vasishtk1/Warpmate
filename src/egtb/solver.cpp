@@ -213,8 +213,11 @@ TableResult Solver::solve_one(const Material& m) {
         for (uint64_t i = begin; i < end; ++i) table[i] = init_value(ctx, i);
     });
 
-    // Rounds read one buffer and write a copy (see solve_parallel in
-    // solver/krk_solver.cpp for why the CPU version double-buffers).
+    // Rounds read one buffer and write a copy. Updating in place is safe in
+    // principle (see the parity argument in docs/solver.md), but threads
+    // reading and writing the same bytes at once is undefined behaviour in
+    // standard C++, so the CPU version double-buffers. The GPU solver updates
+    // in place.
     std::vector<Value> next(size);
     std::vector<uint64_t> changed(threads);
     int ply = 1;

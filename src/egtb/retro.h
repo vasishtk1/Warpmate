@@ -1,8 +1,8 @@
 // Per-position work of the general backward solve (any material).
 //
-// Same idea as solver/krk_retro.h, with one difference: captures and
+// Each round looks at every unsolved position and its children. Captures and
 // promotions lead into other, already-solved tables, whose distances to mate
-// can be larger than the current round. So a position is only decided when
+// can be larger than the current round, so a position is only decided when
 // the relevant child value is within reach of this round:
 //   odd ply  -> WIN  if some child is lost in at most ply-1
 //   even ply -> LOSS if every child is won, all in at most ply-1

@@ -74,8 +74,7 @@ std::vector<Choice> all_moves(const std::vector<SubTable>& subs, const Board& b)
     return out;
 }
 
-std::string outcome_text(const Move& mv, Value c) {
-    (void)mv;
+std::string outcome_text(Value c) {
     if (c == kDraw) return "draw";
     if (c == 0) return "checkmate";
     const int n = moves_to_mate(c);
@@ -89,7 +88,7 @@ int main(int argc, char** argv) {
     std::string fen;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
-        if ((arg == "-d" || arg == "-t") && i + 1 < argc) {
+        if (arg == "-d" && i + 1 < argc) {
             dir = argv[++i];
         } else if (fen.empty()) {
             fen = arg;
@@ -142,7 +141,7 @@ int main(int argc, char** argv) {
     std::printf("Best move: %s\n\nAll moves:\n", move_to_string(actual, pos, moves[best].move).c_str());
     for (const Choice& c : moves) {
         std::printf("  %-7s %s\n", move_to_string(actual, pos, c.move).c_str(),
-                    outcome_text(c.move, c.child).c_str());
+                    outcome_text(c.child).c_str());
     }
 
     // Follow perfect play until mate (or a draw is reached).

@@ -3,8 +3,6 @@
 #include <cctype>
 #include <sstream>
 
-#include "core/notation.h"
-
 namespace wm::egtb {
 
 namespace {
@@ -13,6 +11,13 @@ constexpr char kLetters[] = "KQRBNP";
 
 void set_error(std::string* error, const std::string& msg) {
     if (error) *error = msg;
+}
+
+std::string square_name(int sq) {  // 0 -> "a1"
+    std::string s;
+    s += static_cast<char>('a' + file_of(sq));
+    s += static_cast<char>('1' + rank_of(sq));
+    return s;
 }
 
 }  // namespace
