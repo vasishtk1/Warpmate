@@ -114,6 +114,23 @@ From `warpmate-gen --all3` (Apple M1, all cores):
 
 All five tables match Syzygy on every legal position ([verification.md](verification.md)).
 
+### 4-piece results
+
+From `warpmate-gen --gpu KRvKP` on a Tesla T4 (Google Colab), which solves all five:
+
+| Endgame | Rounds | GPU time | White to move (wins / draws / losses) | Longest forced mate |
+|---|---|---|---|---|
+| KQvKR | 71 | 3.68 s | 8,863,768 / 71,704 / 17,136 | 35 moves |
+| KRvKR | 39 | 2.26 s | 3,139,232 / 7,569,032 / 72,464 | 19 moves |
+| KRvKB | 59 | 3.33 s | 3,787,160 / 6,993,568 / 0 | 29 moves |
+| KRvKN | 81 | 3.62 s | 5,210,920 / 5,569,800 / 8 | 40 moves |
+| KRvKP | 86 | 2.78 s | 7,406,204 / 680,382 / 13,454 | 43 moves |
+
+- The longest mates for KQvKR (35), KRvKR (19), KRvKB (29) and KRvKN (40) match the known results for these endgames.
+- KRvKP's longest forced mate is a win for the side with the pawn (Black to move): the pawn promotes, and the queen then beats the rook.
+- White's losses with the extra material are positions where Black wins material at once, for example by a fork or a skewer.
+- A random sample of 1,000,000 rows from each table matches Syzygy with 0 mismatches ([verification.md](verification.md)).
+
 ## Correctness checks
 
 The test suite (`tests/test_egtb.cpp`) checks:

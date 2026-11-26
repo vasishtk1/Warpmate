@@ -2,6 +2,35 @@
 
 Measured results only. Every solver must produce an identical table; the benchmark tool checks this on every run.
 
+## 4-piece endgames: CPU vs GPU
+
+Measured with `warpmate-bench KQvKR --cpu-trials 1 --gpu-trials 3`. Only the KQvKR table (33,554,432 positions, 71 rounds) is timed; the smaller tables it depends on are solved first, untimed. The GPU gets one untimed warm-up run, then 3 timed runs. The CPU ran once, because one run takes about 10 minutes.
+
+**Machine:** Google Colab, NVIDIA Tesla T4, Intel Xeon @ 2.00 GHz (2 threads)
+
+| Solver | Median (ms) | Best (ms) | Speedup vs CPU |
+|---|---|---|---|
+| CPU, 2 threads | 588,046.9 | 588,046.9 | 1.0× |
+| **GPU, total** | **3,667.9** | **3,660.2** | **160×** |
+| GPU, kernels only | 3,642.5 | 3,631.5 | 161× |
+
+- The CPU and GPU tables were identical.
+- The same caveats as below apply: Colab's 2 CPU threads share one physical core, so the speedup would be smaller against a strong multi-core CPU.
+
+### GPU solve time for every 4-piece endgame
+
+From one `warpmate-gen --gpu KRvKP` run on the same T4, which solves all five 4-piece endgames plus the 3-piece ones they need (each time includes copying the finished table back to the CPU):
+
+| Endgame | Positions | Rounds | GPU time |
+|---|---|---|---|
+| KQvKR | 33,554,432 | 71 | 3.68 s |
+| KRvKR | 33,554,432 | 39 | 2.26 s |
+| KRvKB | 33,554,432 | 59 | 3.33 s |
+| KRvKN | 33,554,432 | 81 | 3.62 s |
+| KRvKP | 33,554,432 | 86 | 2.78 s |
+
+All five take 15.7 s in total. Each 3-piece endgame takes 0.02 s or less.
+
 ## KRvK solver: CPU vs GPU (GPU v1)
 
 Measured with the project's first solvers, which were written only for KRvK (median of 5 runs). Those solvers have since been replaced by the general solver, which produces the identical KRvK table; these numbers will be re-measured with it. The GPU gets one untimed warm-up run first, so its one-off start-up cost (about 180 ms, mostly creating the CUDA context) isn't counted as solving time.

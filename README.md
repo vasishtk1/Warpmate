@@ -41,8 +41,9 @@ flowchart LR
 - **General solver** for any endgame of up to 4 pieces (all piece types, pawns and promotion), with linked tables for captures and promotions *(done)*
 - **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play *(done)*
 - **CUDA solver** (v1: one GPU thread per position): produces a table byte-for-byte identical to the CPU's, about 66× faster than the best CPU result on the same machine (KRvK, measured with the first KRvK-only version) *(done)*
-- **4-piece endgames on the GPU**, then faster CUDA versions with backward move generation and board-symmetry compression *(planned)*
-- **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames match the official tablebases, with 0 mismatches *(done)*
+- **4-piece endgames on the GPU**: KQvKR, KRvKR, KRvKB, KRvKN and KRvKP (33.5 million positions each) in 2 to 4 seconds each on a T4. KQvKR is 160× faster than the CPU solver on the same machine, with identical tables, and finds the known 35-move longest mate *(done)*
+- **Faster CUDA versions** with backward move generation and board-symmetry compression *(planned)*
+- **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames, and a random sample of 3,136,153 legal positions from the five 4-piece endgames, match the official tablebases with 0 mismatches *(done)*
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
 - **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*

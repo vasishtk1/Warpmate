@@ -1,7 +1,7 @@
 // GPU (CUDA) version of the general endgame solver: one thread per position.
 //
 // The chess rules and the per-position step come unchanged from egtb/ (all
-// WM_HD). What's new compared with the KRvK GPU solver:
+// WM_HD), shared with the CPU solver. Two GPU-specific details:
 //   * sub-tables: captures and promotions look up other, already-solved
 //     tables, so those tables live in GPU memory, and the kernels receive a
 //     GPU-side list of them
@@ -36,7 +36,7 @@ __global__ void init_kernel(Context ctx, Value* table, uint64_t size) {
     table[i] = init_value(ctx, i);
 }
 
-// One round, updating the table in place. As in the KRvK solver this is safe:
+// One round, updating the table in place. This is safe:
 // a round only writes values equal to `ply`, and the round's decisions never
 // depend on values equal to `ply` (see egtb/retro.h).
 __global__ void step_kernel(Context ctx, Value* table, uint64_t size, int ply,
