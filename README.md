@@ -40,14 +40,15 @@ flowchart LR
 - **CPU solver** in C++ (multithreaded), the reference the GPU is checked against. First case, king + rook vs king: solves all 524,288 positions and finds the known 16-move longest mate *(done)*
 - **General solver** for any endgame of up to 4 pieces (all piece types, pawns and promotion), with linked tables for captures and promotions *(done)*
 - **Probe tool** that looks up any position and prints the result, every move's outcome, and the line of perfect play *(done)*
-- **CUDA solver** (v1: one GPU thread per position): produces a table byte-for-byte identical to the CPU's, about 66× faster than the best CPU result on the same machine (KRvK, measured with the first KRvK-only version) *(done)*
-- **4-piece endgames on the GPU**: KQvKR, KRvKR, KRvKB, KRvKN and KRvKP (33.5 million positions each) in 2 to 4 seconds each on a T4. KQvKR is 160× faster than the CPU solver on the same machine, with identical tables, and finds the known 35-move longest mate *(done)*
-- **Faster CUDA versions** with backward move generation and board-symmetry compression *(planned)*
+- **CUDA solver** (one GPU thread per position): produces tables byte-for-byte identical to the CPU's *(done)*
+- **4-piece endgames on the GPU**: KQvKR, KRvKR, KRvKB, KRvKN and KRvKP (33.5 million positions each), including the known 35-move longest mate in KQvKR *(done)*
+- **Frontier solver**: instead of re-checking every position every round, walks backward (un-moves) from newly solved positions and checks only what can change. 2.7× to 6.1× faster on the GPU, all five 4-piece endgames in 4.2 s instead of 15.7 s on a T4, with identical tables. KQvKR is 88× faster on the GPU than on the CPU, both using the frontier algorithm *(done)*
+- **Board-symmetry compression** (4 to 8× smaller tables) *(planned)*
 - **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames, and a random sample of 3,136,153 legal positions from the five 4-piece endgames, match the official tablebases with 0 mismatches *(done)*
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
 - **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*
-- **Benchmarks** comparing single-threaded CPU, multithreaded CPU, and GPU, with Nsight profiling *(done)*
+- **Benchmarks** comparing CPU and GPU, full scan and frontier, with Nsight profiling *(done)*
 
 ## Tech stack
 
@@ -74,7 +75,7 @@ Warpmate/
 ├── tools/
 │   ├── gen.cpp            warpmate-gen: solve any endgame (and its dependencies)
 │   ├── probe.cpp          warpmate-probe: look up any solved position
-│   └── bench.cpp          warpmate-bench: time CPU vs GPU and check they agree
+│   └── bench.cpp          warpmate-bench: time CPU and GPU solvers and check they agree
 ├── tests/                 Unit, consistency, and CPU-vs-GPU tests
 ├── examples/
 │   └── cuda_basics/       Introductory CUDA programs
@@ -97,10 +98,10 @@ ctest --test-dir build          # run the tests
 ./build/warpmate-probe "8/8/8/8/8/2k5/1R6/K7 w - - 0 1"
 
 ./build/warpmate-gen --gpu KQvKR   # solve on the GPU (CUDA builds only)
-./build/warpmate-bench KQvKR       # time CPU vs GPU
+./build/warpmate-bench KQvKR       # time CPU and GPU, full scan vs frontier
 ```
 
-No NVIDIA GPU? Open [`notebooks/step6b_4piece_gpu.ipynb`](notebooks/step6b_4piece_gpu.ipynb) in Google Colab with a free T4 GPU.
+No NVIDIA GPU? Open [`notebooks/step6c_frontier_gpu.ipynb`](notebooks/step6c_frontier_gpu.ipynb) in Google Colab with a free T4 GPU.
 
 Example probe output (abridged):
 

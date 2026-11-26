@@ -52,7 +52,7 @@ The per-position logic (`init_value`, `retro_step` in `src/egtb/retro.h`) and al
 
 ## Implementations
 
-Both share `init_value` and `retro_step`; they differ only in how positions are distributed.
+Both share `init_value` and `retro_step`, and both offer two algorithms: **full scan** (described here: every round checks every unsolved position) and **frontier** (the default: every round checks only positions that can change, see [Frontier solver](#frontier-solver)).
 
 | Solver | Where | How a round runs |
 |---|---|---|
@@ -69,7 +69,7 @@ The project started with separate solvers written only for KRvK. They were remov
 - **Data movement:** the table stays on the GPU for the whole solve; only a small counter crosses each round, and the finished table is copied back once.
 - **Error handling:** every CUDA API call is checked, and kernel launches are checked with `cudaGetLastError`.
 
-Profiling the first (KRvK-only) GPU version showed `step_kernel` accounts for ~98% of GPU time, mainly because every round revisits all 524,288 positions even though most are already solved (see [benchmarks.md](benchmarks.md)).
+Profiling the first (KRvK-only) GPU version showed `step_kernel` accounts for ~98% of GPU time, mainly because every round revisits all 524,288 positions even though most are already solved (see [benchmarks.md](benchmarks.md)). The frontier solver below fixes most of that waste.
 
 ## General solver (any material)
 
@@ -116,20 +116,61 @@ All five tables match Syzygy on every legal position ([verification.md](verifica
 
 ### 4-piece results
 
-From `warpmate-gen --gpu KRvKP` on a Tesla T4 (Google Colab), which solves all five:
+From `warpmate-gen --gpu KRvKP` on a Tesla T4 (Google Colab), which solves all five. GPU times are for the frontier solver; the full scan took 2.26 to 3.68 s per table ([benchmarks.md](benchmarks.md)).
 
 | Endgame | Rounds | GPU time | White to move (wins / draws / losses) | Longest forced mate |
 |---|---|---|---|---|
-| KQvKR | 71 | 3.68 s | 8,863,768 / 71,704 / 17,136 | 35 moves |
-| KRvKR | 39 | 2.26 s | 3,139,232 / 7,569,032 / 72,464 | 19 moves |
-| KRvKB | 59 | 3.33 s | 3,787,160 / 6,993,568 / 0 | 29 moves |
-| KRvKN | 81 | 3.62 s | 5,210,920 / 5,569,800 / 8 | 40 moves |
-| KRvKP | 86 | 2.78 s | 7,406,204 / 680,382 / 13,454 | 43 moves |
+| KQvKR | 71 | 1.42 s | 8,863,768 / 71,704 / 17,136 | 35 moves |
+| KRvKR | 39 | 0.61 s | 3,139,232 / 7,569,032 / 72,464 | 19 moves |
+| KRvKB | 59 | 0.56 s | 3,787,160 / 6,993,568 / 0 | 29 moves |
+| KRvKN | 81 | 0.69 s | 5,210,920 / 5,569,800 / 8 | 40 moves |
+| KRvKP | 86 | 0.92 s | 7,406,204 / 680,382 / 13,454 | 43 moves |
 
 - The longest mates for KQvKR (35), KRvKR (19), KRvKB (29) and KRvKN (40) match the known results for these endgames.
 - KRvKP's longest forced mate is a win for the side with the pawn (Black to move): the pawn promotes, and the queen then beats the rook.
 - White's losses with the extra material are positions where Black wins material at once, for example by a fork or a skewer.
 - A random sample of 1,000,000 rows from each table matches Syzygy with 0 mismatches ([verification.md](verification.md)).
+
+## Frontier solver
+
+The full scan wastes most of its work: in KQvKR it runs the per-position step 681 million times over 71 rounds to solve about 33 million positions, because every round re-checks every unsolved position, and most of them can't change. The frontier solver only checks positions that can.
+
+### Which positions can change
+
+A position still unsolved at round `ply` can only be decided then if one of its children has value exactly `ply − 1`:
+
+- *odd ply (win):* it needs a child lost in at most `ply − 1`. A child lost sooner would already have made it a win two rounds earlier.
+- *even ply (loss):* every child must be won in at most `ply − 1`. If the slowest child were faster, it would already have been lost two rounds earlier.
+
+So each round only needs to check:
+
+1. **Parents of last round's solved positions.** A child in the same table gets value `ply − 1` by being solved in round `ply − 1`. The solver keeps a list of those positions (the *frontier*) and walks backward from each one to its parents with **un-moves**.
+2. **Positions whose captures or promotions matter this round.** Children in sub-tables have fixed values, so before round 1 each position records the round where they first count: one plus its fastest lost sub-table child (a win), and one plus its slowest won sub-table child if all of them are won (a loss). Other sub-table values can't change the result.
+
+This gives exactly the same table as the full scan, with the same number of positions solved in every round; only the number of positions *checked* changes.
+
+### Un-moves
+
+`for_each_unmove` (`src/egtb/unmove.h`) lists every position one move before a given one: for each piece of the side that just moved, every square it could have come from. Sliding pieces use the same attack functions as forward moves (a rook could have come from any empty square it attacks now, because nothing between the two squares changed). Pawns un-push one square, or two from their starting rank. Captures and promotions are never reversed, since their parents belong to a different, larger table. Like everything else it is `WM_HD`.
+
+### On the CPU and GPU
+
+Each round has two steps:
+
+| Step | CPU (`Solver`) | GPU (`GpuSolver`) |
+|---|---|---|
+| Mark parents of last round's solved positions | threads split the frontier list; marks are relaxed atomic bytes | `mark_parents_kernel`: one thread per frontier position; threads that mark the same parent write the same byte, so no atomic is needed |
+| Check marked positions | threads scan the table; results are collected first and written after, so no thread reads a value written this round | `frontier_step_kernel`: one thread per position, but only marked ones run the per-position step; newly solved positions get a slot in the next frontier list from `atomicAdd` |
+
+GPU details:
+
+- **`prepare_kernel`** runs once before round 1: it records the capture/promotion rounds for every position and lists the checkmates as the first frontier.
+- **Counting with one atomic per block.** The number of positions checked per round (a statistic) is counted with `__syncthreads_count`, a barrier that also returns how many threads in the block passed a condition, so only one thread per block does an `atomicAdd`.
+- **Memory:** the frontier list (4 bytes per position) and three bytes of marks per position stay on the GPU; about 235 MB for a 4-piece table.
+
+### Results
+
+On a Tesla T4, the GPU frontier solver is 2.7× to 6.1× faster than the full scan on the 4-piece endgames, and solves all five in 4.2 s instead of 15.7 s, with identical tables ([benchmarks.md](benchmarks.md)). The remaining cost is mostly the round kernel, which still launches one thread per position to find the marked ones.
 
 ## Correctness checks
 
@@ -138,14 +179,16 @@ The test suite (`tests/test_egtb.cpp`) checks:
 - king, rook, knight, bishop, queen and pawn attacks, including board edges
 - position encoding round trips, and which positions count as invalid
 - move generation: checkmate, stalemate, a forced rook capture, pawn pushes, promotions (four choices) and pinned pieces
+- **un-moves are the exact reverse of moves**: every non-capturing move appears among the destination's un-moves, and every un-move is a real move, for every position of all five 3-piece endgames and every 97th position of five 4-piece endgames (including pawns on both sides)
 - FEN and move notation, material parsing, canonical form and dependency lists
 - known results: KQvK longest mate 10 moves, KRvK 16, KBvK and KNvK all draws, and the exact KRvK win/draw/loss counts below
 - known positions: checkmate, mate in 1, stalemate, an undefended rook, kings touching, and colour-flipped lookups giving the same value
+- the frontier solver produces the same tables, rounds and per-round solved counts as the full scan, for all five 3-piece endgames
 - 1, 3 and 8 CPU threads produce identical tables
 - tables survive a save/load round trip
 - **every entry is consistent with its children** in all five 3-piece tables, including children in other tables: a win in *n* has a child lost in exactly *n* − 1, a loss in *n* has only won children with the slowest at *n* − 1, and a draw has no lost child and at least one non-won child
 
-With CUDA, `tests/test_egtb_gpu.cpp` checks that the GPU solver produces tables byte-for-byte identical to the CPU's for all five 3-piece endgames.
+With CUDA, `tests/test_egtb_gpu.cpp` checks that both GPU algorithms produce tables byte-for-byte identical to the CPU's for all five 3-piece endgames, with the same positions solved in every round, and that the GPU frontier checks exactly the same positions as the CPU frontier. `warpmate-bench` compares every algorithm's table on the 4-piece endgames.
 
 An independent check against the Syzygy tablebases is provided by `scripts/verify_syzygy.py` ([verification.md](verification.md)).
 
