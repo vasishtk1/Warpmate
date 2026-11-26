@@ -18,7 +18,7 @@ namespace wm::egtb {
 
 class GpuSolver {
 public:
-    GpuSolver();
+    explicit GpuSolver(Algorithm algorithm = Algorithm::kFrontier);
     ~GpuSolver();
     GpuSolver(const GpuSolver&) = delete;
     GpuSolver& operator=(const GpuSolver&) = delete;
@@ -40,6 +40,7 @@ public:
 private:
     TableResult solve_one(const Material& m);
 
+    Algorithm algorithm_;
     std::map<std::string, TableResult> tables_;
     std::map<std::string, Value*> device_tables_;  // stay on the GPU for lookups
     std::map<std::string, double> kernel_ms_;
