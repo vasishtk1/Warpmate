@@ -1,7 +1,7 @@
 # Build output
 build/
 
-# Generated tablebases (rebuild with warpmate-solve)
+# Generated tablebases (rebuild with warpmate-gen)
 tables/
 
 # Downloaded Syzygy files
@@ -16,3 +16,7 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# Phase 3: generated datasets and trained models (rebuilt by the notebook)
+data/
+model/
