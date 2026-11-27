@@ -17,7 +17,7 @@ A KRvK position is three squares plus the side to move. Each position maps to a 
 index = side_to_move << 18 | white_king << 12 | white_rook << 6 | black_king
 ```
 
-That gives 2 × 64³ = **524,288** rows. Encoding and decoding are a few shifts and masks. Rows for impossible positions (overlapping pieces, kings touching, the side not to move in check) are marked invalid. A later version will remove most of them using board symmetry.
+That gives 2 × 64³ = **524,288** rows. Encoding and decoding are a few shifts and masks. Rows for impossible positions (overlapping pieces, kings touching, the side not to move in check, a pawn on the first or last rank, or a double check no legal move can produce) are marked invalid. The last rule matches Syzygy: two pieces can't both give check along one line through the king, nor can three pieces give check at once. A later version will remove most of them using board symmetry.
 
 ## Stored values
 

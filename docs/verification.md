@@ -34,3 +34,19 @@ These tables were built by the **GPU solver** (Tesla T4 on Google Colab). Each h
 | **Total** | | **3,136,153** | **0** |
 
 **Result: PASS**
+
+## Every 3- and 4-piece endgame (2026-11-27)
+
+All 34 tables solved by the GPU solver (the 5 three-piece endgames and 29 of the 30 four-piece ones; KPvKP isn't solved yet), with a random sample of 200,000 rows from each table checked (fixed seed).
+
+| Endgames | Tables | Legal positions compared | Mismatches |
+|---|---|---|---|
+| Two pieces vs a lone king (KQQvK ... KPPvK) | 15 | 1,868,954 | **0** |
+| One piece vs one piece (KQvKQ ... KNvKP) | 14 | 1,747,489 | **0** |
+| Three-piece | 5 | 741,684 | **0** |
+| **Total** | **34** | **4,358,127** | **0** |
+
+**Result: PASS**
+
+The first run of this check failed on 7 of the new tables (KQQvK, KQRvK, KRRvK, KQBvK, KBBvK, KQPvK, KBPvK): Warpmate solved some positions that Syzygy treats as impossible, where two pieces give check from the same line through the king (e.g. queens on b1 and f1 both checking a king on d1). No legal move can produce such a double check. Warpmate's validity rule now rejects these positions, matching Syzygy and python-chess; it agrees with python-chess on 244,648 sampled positions from 8 endgames. Earlier tables are unaffected, since they never have two attacking pieces on the same side.
+

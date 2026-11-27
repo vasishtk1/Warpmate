@@ -44,8 +44,9 @@ flowchart LR
 - **4-piece endgames on the GPU**: KQvKR, KRvKR, KRvKB, KRvKN and KRvKP (33.5 million positions each), including the known 35-move longest mate in KQvKR *(done)*
 - **Frontier solver**: instead of re-checking every position every round, walks backward (un-moves) from newly solved positions and checks only what can change. 2.7× to 6.1× faster on the GPU, all five 4-piece endgames in 4.2 s instead of 15.7 s on a T4, with identical tables. KQvKR is 88× faster on the GPU than on the CPU, both using the frontier algorithm *(done)*
 - **Board-symmetry compression** (4 to 8× smaller tables) *(planned)*
-- **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames, and a random sample of 3,136,153 legal positions from the five 4-piece endgames, match the official tablebases with 0 mismatches *(done)*
-- **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
+- **Every 3- and 4-piece endgame** (34 tables; all but KPvKP, which needs en passant) solved on the GPU *(done)*
+- **Verified against Syzygy**: all 1,945,584 legal positions of the 3-piece endgames, and random samples totalling 4,358,127 legal positions across all 34 tables, match the official tablebases with 0 mismatches *(done)*
+- **Neural network** (769 → 256 → 64 → 3, 213,763 weights) trained on 27.9 million solver-labelled positions: **98.06%** win/draw/loss accuracy on 3.09 million held-out positions (baseline 35.97%), and its favourite move keeps the best result in 99.18% of positions. On 5-piece endgames it never saw, it ranges from 87.6% (KQRvKR) to worse than guessing "draw" (KRBvKR, KRNvKR) ([details](docs/network.md)) *(done)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
 - **Two-player dashboard** (React + FastAPI, runs locally): set up any position or play one out with drag-and-drop moves, the network's win/draw/loss bars, the perfect answer, ranked moves, and blunder warnings *(in progress)*
 - **Benchmarks** comparing CPU and GPU, full scan and frontier, with Nsight profiling *(done)*
