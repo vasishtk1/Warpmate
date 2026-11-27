@@ -373,4 +373,22 @@ std::vector<Material> all_three_piece() {
     return out;
 }
 
+std::vector<Material> all_four_piece() {
+    const std::string pieces = "QRBNP";  // strongest first
+    std::vector<Material> out;
+    const auto add = [&](const std::string& name) {
+        Material m;
+        parse_material(name, &m);
+        out.push_back(canonical(m));
+    };
+    for (size_t i = 0; i < pieces.size(); ++i) {
+        for (size_t j = i; j < pieces.size(); ++j) {
+            add(std::string("K") + pieces[i] + pieces[j] + "vK");  // e.g. KQRvK
+            if (pieces[i] == 'P' && pieces[j] == 'P') continue;   // KPvKP: needs en passant
+            add(std::string("K") + pieces[i] + "vK" + pieces[j]);  // e.g. KQvKR
+        }
+    }
+    return out;
+}
+
 }  // namespace wm::egtb

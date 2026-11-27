@@ -3,6 +3,7 @@
 // 3-piece endgame, the frontier and multithreaded solvers, saving tables,
 // and a full consistency check of every table entry.
 #include <cstdio>
+#include <set>
 #include <string>
 
 #include "check.h"
@@ -343,6 +344,26 @@ void test_frontier_matches(const Solver& frontier) {
     }
 }
 
+// The list of 4-piece endgames: 29, all different, all in canonical form,
+// and every one's dependencies are 3- or 4-piece endgames in the list.
+void test_all_four_piece() {
+    const auto all = all_four_piece();
+    CHECK(all.size() == 29);
+    std::set<std::string> names;
+    for (const Material& m : all) {
+        names.insert(material_name(m));
+        CHECK(material_name(canonical(m)) == material_name(m));
+    }
+    CHECK(names.size() == 29);
+    CHECK(names.count("KQQvK") && names.count("KBNvK") && names.count("KQvKQ") &&
+          names.count("KNvKP") && !names.count("KPvKP"));
+    for (const Material& m : all) {
+        for (const Material& d : direct_dependencies(m)) {
+            CHECK(d.n == 3 || names.count(material_name(d)));
+        }
+    }
+}
+
 // Any number of threads must give exactly the same tables. KPvK also
 // exercises lookups into the four tables a promotion can reach.
 void test_threads_match(const Solver& reference) {
@@ -379,8 +400,13 @@ int main() {
     test_move_generation();
     test_notation();
     for (const char* name : {"KRvK", "KQvK", "KBvK", "KNvK", "KPvK"}) test_unmoves(name, 1);
-    // 4-piece: every 97th position (about 346,000 per table).
-    for (const char* name : {"KQvKR", "KRvKP", "KRvKN", "KPvKP", "KBvKN"}) test_unmoves(name, 97);
+    // 4-piece: every 97th position (about 346,000 per table), including
+    // repeated pieces (two queens, two bishops, two pawns on one side).
+    for (const char* name : {"KQvKR", "KRvKP", "KRvKN", "KPvKP", "KBvKN", "KQQvK", "KBBvK",
+                             "KPPvK"}) {
+        test_unmoves(name, 97);
+    }
+    test_all_four_piece();
 
     Solver solver;
     for (const Material& m : all_three_piece()) solver.solve(m);

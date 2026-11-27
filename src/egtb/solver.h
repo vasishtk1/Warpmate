@@ -90,4 +90,10 @@ private:
 // Every 3-piece endgame (KQvK, KRvK, KBvK, KNvK, KPvK).
 std::vector<Material> all_three_piece();
 
+// Every 4-piece endgame except KPvKP (29 of the 30): two pieces against a
+// lone king (KQQvK ... KPPvK) and one piece against one (KQvKQ ... KNvKP).
+// KPvKP is left out because pawns on both sides need en passant, which the
+// move generator doesn't handle yet.
+std::vector<Material> all_four_piece();
+
 }  // namespace wm::egtb

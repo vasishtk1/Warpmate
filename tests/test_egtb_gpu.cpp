@@ -12,6 +12,30 @@
 using namespace wm;
 using namespace wm::egtb;
 
+// With two identical pieces (e.g. KQQvK), every position appears twice in
+// the table, once per order of the two pieces. Both rows must hold the same
+// value, which checks that captures, moves and lookups treat them alike.
+void test_repeated_pieces(GpuSolver& gpu) {
+    for (const char* name : {"KQQvK", "KBBvK", "KNNvK"}) {
+        Material m;
+        parse_material(name, &m);
+        const TableResult& t = gpu.solve(m);
+        uint64_t diffs = 0, won = 0;
+        for (uint64_t i = 0; i < t.values.size(); ++i) {
+            Position p = decode(m, i);
+            const uint8_t a = p.sq[1];
+            p.sq[1] = p.sq[2];  // pieces 1 and 2 are the two identical ones
+            p.sq[2] = a;
+            diffs += t.values[i] != t.values[encode(m, p)];
+            won += is_win(t.values[i]);
+        }
+        std::printf("  %-5s rows that differ when the identical pieces swap: %llu\n", name,
+                    static_cast<unsigned long long>(diffs));
+        CHECK(diffs == 0);
+        CHECK(won > 0);  // even KNNvK has a few forced mates
+    }
+}
+
 int main() {
     try {
         std::printf("GPU: %s\n", GpuSolver::device_name().c_str());
@@ -45,6 +69,7 @@ int main() {
                 CHECK(t.round_stats[r].checked == g.round_stats[r].checked);
             }
         }
+        test_repeated_pieces(frontier);
     } catch (const std::exception& e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

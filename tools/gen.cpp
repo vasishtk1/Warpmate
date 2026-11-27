@@ -2,6 +2,7 @@
 //
 //   warpmate-gen KQvKR KRvKP        solve these (and anything they depend on)
 //   warpmate-gen --all3             solve every 3-piece endgame
+//   warpmate-gen --all4             solve every 4-piece endgame except KPvKP
 //   options: -d DIR (default tables), --threads N (CPU, default: all cores),
 //            --gpu (solve on the GPU; builds with CUDA only)
 //
@@ -73,6 +74,8 @@ int main(int argc, char** argv) {
             use_gpu = true;
         } else if (arg == "--all3") {
             for (const Material& m : all_three_piece()) requested.push_back(m);
+        } else if (arg == "--all4") {
+            for (const Material& m : all_four_piece()) requested.push_back(m);
         } else {
             Material m;
             std::string error;
@@ -89,7 +92,7 @@ int main(int argc, char** argv) {
         }
     }
     if (requested.empty()) {
-        std::fprintf(stderr, "usage: %s [-d DIR] [--threads N | --gpu] (--all3 | MATERIAL...)\n",
+        std::fprintf(stderr, "usage: %s [-d DIR] [--threads N | --gpu] (--all3 | --all4 | MATERIAL...)\n",
                      argv[0]);
         return 2;
     }
