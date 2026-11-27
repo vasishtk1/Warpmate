@@ -80,6 +80,15 @@ WM_HD inline bool in_check(const Material& m, const Position& p, uint8_t color) 
     return is_attacked(m, p, p.sq[king_index(m, color)], color ^ 1, occupancy(m, p));
 }
 
+// Are three squares on one straight line (rank, file or diagonal)?
+WM_HD inline bool collinear(int a, int b, int c) {
+    const int fa = file_of(a), fb = file_of(b), fc = file_of(c);
+    const int ra = rank_of(a), rb = rank_of(b), rc = rank_of(c);
+    return (ra == rb && rb == rc) || (fa == fb && fb == fc) ||
+           (fa - ra == fb - rb && fb - rb == fc - rc) ||
+           (fa + ra == fb + rb && fb + rb == fc + rc);
+}
+
 WM_HD inline bool is_valid(const Material& m, const Position& p) {
     Bitboard seen = 0;
     for (int i = 0; i < m.n; ++i) {
@@ -91,7 +100,27 @@ WM_HD inline bool is_valid(const Material& m, const Position& p) {
     }
     // The side that just moved can't have left its own king in check.
     // (This also rules out the two kings standing next to each other.)
-    return !in_check(m, p, p.stm ^ 1);
+    if (in_check(m, p, p.stm ^ 1)) return false;
+
+    // Checks that no legal move can produce (the same rules as Syzygy and
+    // python-chess): more than two pieces giving check, or two checkers on
+    // one line through the king, e.g. queens on b1 and f1 both checking a
+    // king on d1. One move gives at most a direct check plus a discovered
+    // one, and those never come from opposite sides of the same line.
+    const int king = p.sq[king_index(m, p.stm)];
+    const Bitboard occ = occupancy(m, p);
+    int checkers = 0;
+    int first = -1, second = -1;
+    for (int i = 0; i < m.n; ++i) {
+        if (m.color[i] == p.stm) continue;
+        if (piece_attacks(m.type[i], m.color[i], p.sq[i], occ) & bb(king)) {
+            ++checkers;
+            (first < 0 ? first : second) = p.sq[i];
+        }
+    }
+    if (checkers > 2) return false;
+    if (checkers == 2 && collinear(first, second, king)) return false;
+    return true;
 }
 
 struct Move {

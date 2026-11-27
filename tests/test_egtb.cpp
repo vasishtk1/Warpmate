@@ -98,6 +98,20 @@ void test_validity() {
     CHECK(!is_valid(m, p));
     from_fen("R6k/8/6K1/8/8/8/8/8 b - - 0 1", &m, &p);  // same, Black to move: fine
     CHECK(is_valid(m, p));
+    // Double checks no legal move can produce: two checkers on one line
+    // through the king (queens b1 and f1 around Kd1; bishop b7 and pawn d5
+    // around Kc6). Syzygy treats these as illegal.
+    from_fen("8/8/8/8/8/8/8/KQ1k1Q2 b - - 0 1", &m, &p);
+    CHECK(!is_valid(m, p));
+    from_fen("8/1B6/2k5/3P4/8/8/8/2K5 b - - 0 1", &m, &p);
+    CHECK(!is_valid(m, p));
+    // A real double check (knight from e4 to d6 uncovers the rook on e1).
+    from_fen("4k3/8/3N4/8/8/8/8/K3R3 b - - 0 1", &m, &p);
+    CHECK(is_valid(m, p));
+    // Two white pieces on one line through the king, but the queen blocks
+    // the rook, so only the queen gives check: fine.
+    from_fen("8/8/8/8/8/8/8/KRQk4 b - - 0 1", &m, &p);
+    CHECK(is_valid(m, p));
 }
 
 void test_move_generation() {
