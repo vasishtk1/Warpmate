@@ -20,3 +20,7 @@ __pycache__/
 # Phase 3: generated datasets and trained models (rebuilt by the notebook)
 data/
 model/
+
+# Dashboard (Node)
+node_modules/
+dashboard/web/dist/

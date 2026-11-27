@@ -47,7 +47,7 @@ flowchart LR
 - **Verified against Syzygy**: all 1,945,584 legal positions of the five 3-piece endgames, and a random sample of 3,136,153 legal positions from the five 4-piece endgames, match the official tablebases with 0 mismatches *(done)*
 - **Neural network** trained on solver output, with accuracy measured against perfect answers *(planned)*
 - **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
-- **Two-player dashboard** with live win/draw/loss bars, ranked next moves, and blunder warnings *(planned)*
+- **Two-player dashboard** (React + FastAPI, runs locally): set up any position or play one out with drag-and-drop moves, the network's win/draw/loss bars, the perfect answer, ranked moves, and blunder warnings *(in progress)*
 - **Benchmarks** comparing CPU and GPU, full scan and frontier, with Nsight profiling *(done)*
 
 ## Tech stack
@@ -80,6 +80,7 @@ Warpmate/
 ├── examples/
 │   └── cuda_basics/       Introductory CUDA programs
 ├── ml/                    Neural network: dataset builder, model, training, evaluation (PyTorch)
+├── dashboard/             Two-player analysis app: React page (web/) and FastAPI server (server/)
 ├── notebooks/             Colab notebooks to build and run on a free GPU
 ├── scripts/
 │   └── verify_syzygy.py   Check a table against Syzygy
@@ -118,6 +119,17 @@ Probing a king + pawn ending shows perfect play crossing into another table when
 $ ./build/warpmate-probe "3k4/8/3K4/3P4/8/8/8/8 w - - 0 1"
 Result: White mates in 11
 Perfect play: 1. Ke6 Kc7 2. d6+ Kb6 3. d7 Kc7 4. Ke7 Kb6 5. d8=Q+ Kc5 ... 11. Qa2#
+```
+
+### Dashboard
+
+A local web app to set up or play out positions, with the network's guess next to the perfect answer. It needs the solved tables in `tables/` and, for real network output, trained weights in `model/warpmate_net.pt` (from the Phase 3 notebook); without them the bars are a labelled placeholder.
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r dashboard/server/requirements.txt
+(cd dashboard/web && npm install)
+dashboard/run.sh                 # then open http://localhost:5173
+(cd dashboard/server && ../../.venv/bin/python -m unittest)   # server tests
 ```
 
 To verify against Syzygy, install the Python requirements and download the matching `.rtbw` files (see the instructions at the top of `scripts/verify_syzygy.py`), then:
