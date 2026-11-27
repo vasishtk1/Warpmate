@@ -3,8 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisPanel } from "./components/AnalysisPanel";
 import { Board, type TrayDrag } from "./components/Board";
 import { ChanceChart, MoveList, PieceTray, type PlayedMove } from "./components/BottomBar";
-import type { Analysis, Color, PieceCode, Placement, Status } from "./lib";
-import { analyze, fetchStatus, fromFen, randomFen, toFen } from "./lib";
+import { ModelView } from "./components/ModelView";
+import type { Analysis, Color, ModelInfo, PieceCode, Placement, Status } from "./lib";
+import { analyze, fetchModel, fetchStatus, fromFen, randomFen, toFen } from "./lib";
 
 // King + rook vs king, the longest forced mate (16 moves): a good first position.
 const DEFAULT_FEN = "8/8/8/8/8/2k5/1R6/K7 w - - 0 1";
@@ -21,6 +22,9 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [mode, setMode] = useState<"setup" | "play">("setup");
   const [orientation, setOrientation] = useState<Color>("w");
+  const [tab, setTab] = useState<"board" | "model">("board");
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+  const [modelError, setModelError] = useState<string | null>(null);
 
   // Set-up mode state.
   const initial = useMemo(() => fromFen(DEFAULT_FEN), []);
@@ -79,6 +83,16 @@ export default function App() {
       ctrl.abort();
     };
   }, [currentFen, mode]);
+
+  useEffect(() => {
+    if (tab !== "model") return;
+    fetchModel(currentFen)
+      .then((m) => {
+        setModelInfo(m);
+        setModelError(null);
+      })
+      .catch((e) => setModelError((e as Error).message));
+  }, [tab, currentFen]);
 
   // ---- play mode ----
 
@@ -208,13 +222,29 @@ export default function App() {
               <span className="rounded-full bg-ink-800 px-2.5 py-1 text-ink-300">{status.tables.length} tables loaded</span>
             </>
           )}
-          <button onClick={() => setOrientation((o) => (o === "w" ? "b" : "w"))} className="btn">Flip board</button>
+          {tab === "board" && (
+            <button onClick={() => setOrientation((o) => (o === "w" ? "b" : "w"))} className="btn">Flip board</button>
+          )}
+          <nav className="ml-1 flex rounded-lg bg-ink-800 p-0.5 ring-1 ring-white/5">
+            {(["board", "model"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${tab === t ? "bg-ink-700 text-white shadow" : "text-ink-300 hover:text-white"}`}
+              >
+                {t === "board" ? "Board" : "Model"}
+              </button>
+            ))}
+          </nav>
         </div>
       </header>
 
-      <main className="grid flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="flex flex-col gap-4">
-          <div className="mx-auto w-full max-w-[min(74vh,680px)]">
+      {tab === "model" && <ModelView info={modelInfo} analysis={analysis} error={modelError} />}
+
+      <main className={`flex flex-col gap-6 ${tab === "board" ? "" : "hidden"}`}>
+        {/* Top row: the board and the analysis panel, the same height. */}
+        <div className="grid gap-6 lg:grid-cols-[min(70vh,640px)_minmax(320px,1fr)]">
+          <div className="w-full">
             <Board
               placement={board}
               orientation={orientation}
@@ -231,8 +261,16 @@ export default function App() {
               disabled={mode === "play" && !!analysis?.game_over}
             />
           </div>
+          {/* The panel takes the board's height; its move list scrolls inside. */}
+          <aside className="relative min-h-[480px] lg:min-h-0">
+            <div className="lg:absolute lg:inset-0">
+              <AnalysisPanel analysis={analysis} loading={loading} error={error} canPlayMoves={mode === "play" && !analysis?.game_over} onPlayMove={playUci} />
+            </div>
+          </aside>
+        </div>
 
-          <section className="mx-auto flex w-full max-w-[min(74vh,680px)] flex-col gap-4 rounded-2xl border border-white/5 bg-ink-900/80 p-4">
+        {/* Bottom: its own full-width section. */}
+        <section className="flex w-full flex-col gap-4 rounded-2xl border border-white/5 bg-ink-900/80 p-4">
             {mode === "setup" ? (
               <>
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -276,12 +314,7 @@ export default function App() {
                 </div>
               </>
             )}
-          </section>
-        </div>
-
-        <aside>
-          <AnalysisPanel analysis={analysis} loading={loading} error={error} canPlayMoves={mode === "play" && !analysis?.game_over} onPlayMove={playUci} />
-        </aside>
+        </section>
       </main>
     </div>
   );

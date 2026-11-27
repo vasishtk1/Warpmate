@@ -6,6 +6,7 @@ Kept separate from the web server (app.py) so it can be tested directly.
 
 from __future__ import annotations
 
+import json
 import random
 import sys
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ml"))
-from tables import DRAW, INVALID, TableSet, canonical, wdl  # noqa: E402
+from tables import DRAW, INVALID, TableSet, black_is_stronger, canonical, wdl  # noqa: E402
 
 PAD = 769  # must match ml/model.py
 
@@ -197,6 +198,42 @@ class Analyzer:
             "game_over": game_over(board),
         }
 
+    def model_info(self, fen: str | None = None) -> dict:
+        """The network's architecture, its training record (if the files from
+        the Phase 3 notebook are next to the weights), and which of the 769
+        inputs are switched on for `fen`."""
+        net = self.network
+        hidden = list(net.model.hidden) if net.model is not None else [256, 64]
+        sizes = [769, *hidden, 3]
+        layers = []
+        for k in range(len(sizes) - 1):
+            layers.append({"in": sizes[k], "out": sizes[k + 1],
+                           "params": sizes[k] * sizes[k + 1] + sizes[k + 1],
+                           "activation": "ReLU" if k < len(sizes) - 2 else "softmax"})
+        info = {
+            "loaded": not net.placeholder,
+            "sizes": sizes,
+            "layers": layers,
+            "total_params": sum(l["params"] for l in layers),
+            "training": read_json(net.path.parent / "training_log.json"),
+            "results": read_json(net.path.parent / "results.json"),
+            "input": None,
+        }
+        if fen:
+            try:
+                board = chess.Board(fen)
+            except ValueError:
+                return info
+            if invalid_reason(board) is None:
+                codes, stm = encode(board)
+                # Canonical order (colour, then type), as black_is_stronger expects.
+                pieces = sorted((piece_key_of(p) for p in board.piece_map().values()),
+                                key=lambda tc: tc[1] * 8 + tc[0])
+                flipped = black_is_stronger(pieces)
+                info["input"] = {"active": sorted(codes + ([768] if stm == 0 else [])),
+                                 "flipped": flipped}
+        return info
+
     def random_position(self, material: str | None, rng: random.Random) -> str:
         """A random legal position for `material` (e.g. 'KQvKR'), or for a
         random endgame we have a table for."""
@@ -215,6 +252,19 @@ class Analyzer:
             if board.is_valid() and not board.is_game_over():
                 return board.fen()
         raise ValueError(f"couldn't place {material}")
+
+
+def read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def piece_key_of(piece: chess.Piece) -> tuple[int, int]:
+    """python-chess piece -> (type, colour) in the tables' numbering."""
+    from tables import TYPE_OF
+    return (TYPE_OF[piece.piece_type], 0 if piece.color == chess.WHITE else 1)
 
 
 def to_colors(p: np.ndarray, turn: bool) -> dict:

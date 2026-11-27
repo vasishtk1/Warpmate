@@ -40,6 +40,34 @@ export interface Status {
   network: "trained" | "placeholder";
 }
 
+export interface ModelInfo {
+  loaded: boolean;
+  sizes: number[];
+  layers: { in: number; out: number; params: number; activation: string }[];
+  total_params: number;
+  training: {
+    baseline_accuracy: number;
+    train_examples: number;
+    test_examples: number;
+    batch: number;
+    lr: number;
+    epochs: { epoch: number; train_loss: number; test_loss: number; test_accuracy: number; seconds: number }[];
+  } | null;
+  results: {
+    test?: { accuracy: number; baseline: number; positions: number };
+    moves?: { overall: number };
+    five_piece?: { endgame: string; accuracy: number; baseline: number }[];
+  } | null;
+  input: { active: number[]; flipped: boolean } | null;
+}
+
+export async function fetchModel(fen?: string): Promise<ModelInfo> {
+  const q = fen ? `?fen=${encodeURIComponent(fen)}` : "";
+  const res = await fetch(`/api/model${q}`);
+  if (!res.ok) throw new Error("couldn't load the model description");
+  return res.json();
+}
+
 export async function analyze(fen: string, signal?: AbortSignal): Promise<Analysis> {
   const res = await fetch("/api/analyze", {
     method: "POST",

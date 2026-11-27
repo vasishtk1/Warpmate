@@ -24,9 +24,9 @@ function Bar({ label, value, tone }: { label: string; value: number; tone: strin
   );
 }
 
-function Card({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
+function Card({ title, children, right, className = "" }: { title: string; children: React.ReactNode; right?: React.ReactNode; className?: string }) {
   return (
-    <section className="rounded-2xl border border-white/5 bg-ink-900/80 p-4 shadow-lg shadow-black/20 backdrop-blur">
+    <section className={`rounded-2xl border border-white/5 bg-ink-900/80 p-4 shadow-lg shadow-black/20 backdrop-blur ${className}`}>
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-300">{title}</h3>
         {right}
@@ -90,7 +90,7 @@ export function AnalysisPanel({ analysis, loading, error, canPlayMoves, onPlayMo
   const moves = analysis.moves ?? [];
 
   return (
-    <div className={`flex flex-col gap-4 transition-opacity ${loading ? "opacity-70" : ""}`}>
+    <div className={`flex h-full flex-col gap-4 transition-opacity ${loading ? "opacity-70" : ""}`}>
       <div className="flex items-baseline justify-between px-1">
         <h2 className="text-lg font-semibold">
           {analysis.game_over ? cap(analysis.game_over) : `${side} to move`}
@@ -127,9 +127,10 @@ export function AnalysisPanel({ analysis, loading, error, canPlayMoves, onPlayMo
       {moves.length > 0 && (
         <Card
           title="Best moves"
+          className="flex min-h-0 flex-1 flex-col"
           right={<span className="text-[11px] text-ink-500">ranked by {analysis.ranked_by === "perfect" ? "perfect play" : "the network"}</span>}
         >
-          <ul className="-mx-2 max-h-72 overflow-y-auto pr-1">
+          <ul className="-mx-2 min-h-0 flex-1 overflow-y-auto pr-1">
             {moves.map((m, i) => (
               <li key={m.uci}>
                 <button

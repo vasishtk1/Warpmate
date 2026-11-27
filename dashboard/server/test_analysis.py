@@ -92,6 +92,22 @@ class PerfectAnswers(unittest.TestCase):
         self.assertEqual(len(board.piece_map()), 3)
 
 
+class ModelInfo(unittest.TestCase):
+    def test_architecture_and_inputs(self):
+        a = Analyzer(TABLES, Path("/nonexistent/model.pt"))
+        info = a.model_info("8/8/8/8/8/2k5/1R6/K7 w - - 0 1")
+        self.assertEqual(info["sizes"], [769, 256, 64, 3])
+        self.assertEqual(info["total_params"], 213_763)  # matches train.py's count
+        # White king a1 (code 0*64+0), white rook b2 (2*64+9), black king c3
+        # ((6+0)*64+18), and input 768 = White to move.
+        self.assertEqual(info["input"]["active"], [0, 137, 402, 768])
+        self.assertFalse(info["input"]["flipped"])
+        # Black has the rook: the network sees it colour-flipped.
+        flipped = a.model_info("r7/8/8/8/8/6k1/8/7K b - - 0 1")["input"]
+        self.assertTrue(flipped["flipped"])
+        self.assertIn(768, flipped["active"])  # after flipping, "White" is to move
+
+
 class Validity(unittest.TestCase):
     def test_reasons(self):
         self.assertIsNone(invalid_reason(chess.Board("7k/8/6K1/8/8/8/8/R7 w - - 0 1")))

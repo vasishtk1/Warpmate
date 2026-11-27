@@ -45,6 +45,12 @@ def analyze(req: AnalyzeRequest) -> dict:
     return analyzer.analyze(req.fen)
 
 
+@app.get("/api/model")
+def model(fen: str | None = None) -> dict:
+    """Architecture, training record, and the active inputs for `fen`."""
+    return analyzer.model_info(fen)
+
+
 @app.get("/api/random")
 def random_position(material: str | None = None) -> dict:
     try:
