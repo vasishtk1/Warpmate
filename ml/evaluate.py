@@ -227,7 +227,7 @@ def main() -> int:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     rng = np.random.default_rng(args.seed)
     model = load(str(args.model), device)
-    data = np.load(args.data)
+    data = dict(np.load(args.data))  # read every array once (NpzFile re-reads on each access)
 
     results = {"test": test_accuracy(model, device, data)}
     results["moves"] = move_choice(model, device, data, TableSet(args.tables),
