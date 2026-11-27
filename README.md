@@ -79,7 +79,8 @@ Warpmate/
 ├── tests/                 Unit, consistency, and CPU-vs-GPU tests
 ├── examples/
 │   └── cuda_basics/       Introductory CUDA programs
-├── notebooks/             Colab notebook to build and run on a free GPU
+├── ml/                    Neural network: dataset builder, model, training, evaluation (PyTorch)
+├── notebooks/             Colab notebooks to build and run on a free GPU
 ├── scripts/
 │   └── verify_syzygy.py   Check a table against Syzygy
 └── docs/                  Technical documentation
