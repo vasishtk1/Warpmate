@@ -4,6 +4,10 @@
 //   kNaive: one kernel per step (expand the input to 769 numbers, layer 1,
 //           layer 2, layer 3, softmax), passing results through GPU memory.
 //           The straightforward version, and the GPU reference.
+//   kFused: the whole network in one kernel; in-between results stay in fast
+//           on-chip (shared) memory. Layer 1 still multiplies all 769 inputs.
+//   kSparse: like kFused, but layer 1 only adds up the weight rows of the
+//           pieces on the board (3-6 rows instead of 769 inputs).
 //
 // No CUDA types appear here, so ordinary C++ files can include it.
 #pragma once
@@ -17,8 +21,10 @@ namespace wm::infer {
 
 enum class Variant : int {
     kNaive = 0,
+    kFused = 1,
+    kSparse = 2,
 };
-constexpr int kVariantCount = 1;
+constexpr int kVariantCount = 3;
 
 const char* variant_name(Variant v);
 
