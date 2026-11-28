@@ -5,8 +5,9 @@
 //   2. the CPU's sparse layer 1 (add up the weight rows of the pieces) gives
 //      the same answers as the plain dense calculation over all 769 inputs,
 //      for both the 32-bit and the 8-bit weights
-//   3. (with CUDA) every GPU variant matches the CPU reference, for batch
-//      sizes that do and don't fill whole blocks and for different slot counts
+//   3. (with CUDA) every GPU variant matches the CPU reference (the 8-bit one
+//      the 8-bit reference), for batch sizes that do and don't fill whole
+//      blocks and for different slot counts
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -230,13 +231,13 @@ void test_cpu_matches_dense(const FloatWeights& fw, const Int8Weights& qw) {
 }
 
 #ifdef WARPMATE_HAS_CUDA
-void test_gpu_matches_cpu(const FloatWeights& fw) {
+void test_gpu_matches_cpu(const FloatWeights& fw, const Int8Weights& qw) {
     if (GpuEngine::device_name().empty()) {
         std::printf("  no GPU found: skipping the GPU checks\n");
         return;
     }
     std::printf("  GPU: %s\n", GpuEngine::device_name().c_str());
-    GpuEngine engine(fw);
+    GpuEngine engine(fw, &qw);
     Rng rng{11};
     struct Case { int n, slots; bool crowded; };
     const Case cases[] = {{1, 5, false},  {7, 5, false},   {8, 5, false},  {9, 5, false},
@@ -249,7 +250,10 @@ void test_gpu_matches_cpu(const FloatWeights& fw) {
             std::vector<uint8_t> stm;
             random_boards(rng, c.n, c.slots, c.crowded, codes, stm);
             std::vector<float> p(c.n * 3), l(c.n * 3), gp(c.n * 3), gl(c.n * 3);
-            forward_cpu(fw, codes.data(), c.slots, stm.data(), c.n, p.data(), l.data());
+            if (variant == Variant::kInt8)
+                forward_cpu_int8(qw, codes.data(), c.slots, stm.data(), c.n, p.data(), l.data());
+            else
+                forward_cpu(fw, codes.data(), c.slots, stm.data(), c.n, p.data(), l.data());
             engine.run_host(variant, codes.data(), c.slots, stm.data(), c.n, gp.data(), gl.data());
             worst_p = std::max(worst_p, max_diff(p, gp));
             worst_l = std::max(worst_l, max_diff(l, gl));
@@ -275,7 +279,7 @@ int main() {
     const Int8Weights qw = random_int8_weights(rng);
     test_cpu_matches_dense(fw, qw);
 #ifdef WARPMATE_HAS_CUDA
-    test_gpu_matches_cpu(fw);
+    test_gpu_matches_cpu(fw, qw);
 #else
     std::printf("  built without CUDA: GPU checks skipped\n");
 #endif

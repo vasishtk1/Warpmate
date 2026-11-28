@@ -8,6 +8,8 @@
 //           on-chip (shared) memory. Layer 1 still multiplies all 769 inputs.
 //   kSparse: like kFused, but layer 1 only adds up the weight rows of the
 //           pieces on the board (3-6 rows instead of 769 inputs).
+//   kInt8:  like kSparse, with 8-bit weights and 8-bit integer math
+//           (__dp4a) for layers 1 and 2. Needs the 8-bit weights.
 //
 // No CUDA types appear here, so ordinary C++ files can include it.
 #pragma once
@@ -23,15 +25,17 @@ enum class Variant : int {
     kNaive = 0,
     kFused = 1,
     kSparse = 2,
+    kInt8 = 3,
 };
-constexpr int kVariantCount = 3;
+constexpr int kVariantCount = 4;
 
 const char* variant_name(Variant v);
 
 class GpuEngine {
 public:
-    // Copies the weights to the GPU (once; they stay there).
-    explicit GpuEngine(const FloatWeights& weights);
+    // Copies the weights to the GPU (once; they stay there). `int8` may be
+    // null, in which case the kInt8 variant isn't available.
+    explicit GpuEngine(const FloatWeights& weights, const Int8Weights* int8 = nullptr);
     ~GpuEngine();
     GpuEngine(const GpuEngine&) = delete;
     GpuEngine& operator=(const GpuEngine&) = delete;

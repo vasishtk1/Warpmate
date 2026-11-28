@@ -67,6 +67,12 @@ if(WARPMATE_HAS_CUDA)
   list(APPEND WARPMATE_INFER_SOURCES src/inference/infer_gpu.cu)
 endif()
 add_library(warpmate_infer_core STATIC ${WARPMATE_INFER_SOURCES})
+# The 8-bit CPU reference must round exactly like NumPy and the GPU kernel:
+# stop the compiler from fusing a * b + c into one instruction (an FMA, which
+# rounds once instead of twice).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(src/inference/network.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+endif()
 target_include_directories(warpmate_infer_core PUBLIC src)
 set_target_properties(warpmate_infer_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(WARPMATE_HAS_CUDA)

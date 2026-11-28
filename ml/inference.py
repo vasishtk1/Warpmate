@@ -73,8 +73,12 @@ class Engine:
         self.has_gpu = bool(self._lib.wm_has_gpu(handle))
         self.has_int8 = bool(self._lib.wm_has_int8(handle))
         self.variants: list[str] = []
-        while (name := self._lib.wm_variant_name(len(self.variants))) is not None:
-            self.variants.append(name.decode())
+        names = []
+        while (name := self._lib.wm_variant_name(len(names))) is not None:
+            names.append(name.decode())
+        self._all_variants = names
+        # "int8" needs the 8-bit weights.
+        self.variants = [v for v in names if v != "int8" or self.has_int8]
 
     def __del__(self):
         if getattr(self, "_handle", None):
@@ -90,7 +94,7 @@ class Engine:
     def variant_id(self, variant: str) -> int:
         if variant not in self.variants:
             raise ValueError(f"unknown variant {variant!r}; available: {self.variants}")
-        return self.variants.index(variant)
+        return self._all_variants.index(variant)
 
     # ---- NumPy in, NumPy out ----
 

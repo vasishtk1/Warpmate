@@ -11,13 +11,20 @@ variant when there is a GPU) it runs the test set and compares with PyTorch:
     can legitimately flip the pick.
   * accuracy against the perfect answers (the labels)
 
+The 8-bit versions can't match PyTorch's 32-bit answers exactly. They are
+checked against the NumPy implementation of the same 8-bit math
+(ml/quantize.py), which they must match to within rounding, and their
+accuracy drop compared with PyTorch is reported (and must stay under 1
+percentage point).
+
 It also re-runs a sample with extra padding slots and with awkward batch sizes
 (1, 7, 9, ...) to check those give exactly the same answers.
 
 Usage:
     python ml/check_inference.py --data data/dataset.npz --model model [--limit N]
 
-`--model` is the directory holding warpmate_net.pt and warpmate_net.npz.
+`--model` is the directory holding warpmate_net.pt, warpmate_net.npz and
+(optionally) warpmate_net_int8.npz from ml/quantize.py.
 Exits with status 1 if any check fails.
 """
 
@@ -35,9 +42,12 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from inference import Engine  # noqa: E402
 from model import PAD, features, load  # noqa: E402
+from quantize import int8_forward, load_int8  # noqa: E402
 
 PROB_TOLERANCE = 1e-4   # 32-bit versions: max allowed probability difference
 TIE_MARGIN = 1e-4       # picks within this of a tie may flip on rounding
+INT8_TOLERANCE = 1e-5   # 8-bit versions vs the NumPy 8-bit reference
+INT8_MAX_DROP = 0.01    # max accuracy drop of the 8-bit versions (1 point)
 
 
 def torch_reference(model, device, codes, stm, batch=65536):
@@ -67,7 +77,8 @@ def compare(name, probs, logits, ref_probs, ref_logits, labels, tolerance):
     ok = prob_diff < tolerance and real_differ == 0 if tolerance is not None else True
     logit_text = f"{logit_diff:9.2e}" if logit_diff is not None else "      n/a"
     print(f"  {name:12} {n:>10,} {prob_diff:10.2e} {logit_text} {int(differ.sum()):>8} "
-          f"{real_differ:>8} {accuracy * 100:8.3f}%  {'PASS' if ok else 'FAIL'}")
+          f"{real_differ:>8} {accuracy * 100:8.3f}%  "
+          f"{'(info)' if tolerance is None else 'PASS' if ok else 'FAIL'}")
     return {"boards": n, "max_prob_diff": prob_diff, "max_logit_diff": logit_diff,
             "picks_differ": int(differ.sum()), "picks_differ_not_near_tie": real_differ,
             "accuracy": accuracy, "pass": bool(ok)}
@@ -76,6 +87,45 @@ def compare(name, probs, logits, ref_probs, ref_logits, labels, tolerance):
 def header():
     print(f"  {'version':12} {'boards':>10} {'prob diff':>10} {'logit diff':>9} "
           f"{'pick !=':>8} {'non-tie':>8} {'accuracy':>9}")
+
+
+def check_int8(engine, int8_path, gpu_variants, codes, stm, labels, ref_probs, ref_logits,
+               n_cpu, results) -> bool:
+    """8-bit versions: same answers as the NumPy 8-bit math, small accuracy drop."""
+    q = load_int8(int8_path)
+    ok = True
+    print("\n== 8-bit versions compared with PyTorch's 32-bit answers (for information)")
+    header()
+    outputs = {"cpu-int8": engine.cpu(codes[:n_cpu], stm[:n_cpu], int8=True, logits=True)}
+    if "int8" in gpu_variants:
+        outputs["int8"] = engine.gpu("int8", codes, stm, logits=True)
+    for name, (probs, logits) in outputs.items():
+        results["versions"][name] = compare(name, probs, logits, ref_probs, ref_logits, labels,
+                                            None)
+
+    sample = min(200_000, len(codes))
+    ref8 = int8_forward(q, codes[:sample], stm[:sample])
+    ref8_probs = np.exp(ref8 - ref8.max(1, keepdims=True))
+    ref8_probs /= ref8_probs.sum(1, keepdims=True)
+    torch_acc = float((ref_probs.argmax(1) == labels).mean())
+    print(f"\n== 8-bit versions compared with the NumPy 8-bit reference ({sample:,} boards)")
+    for name, (probs, logits) in outputs.items():
+        m = min(sample, len(probs))
+        diff = float(np.abs(probs[:m] - ref8_probs[:m]).max())
+        logit_diff = float(np.abs(logits[:m] - ref8[:m]).max())
+        n = len(probs)
+        acc = float((probs.argmax(1) == labels[:n]).mean())
+        torch_acc_n = float((ref_probs[:n].argmax(1) == labels[:n]).mean())
+        drop = torch_acc_n - acc
+        good = diff < INT8_TOLERANCE and drop < INT8_MAX_DROP
+        ok &= good
+        print(f"  {name:12} max prob diff {diff:.2e}, max logit diff {logit_diff:.2e}; "
+              f"accuracy {acc * 100:.3f}% vs PyTorch {torch_acc_n * 100:.3f}% on the same "
+              f"{n:,} boards (drop {drop * 100:+.3f} points)  {'PASS' if good else 'FAIL'}")
+        results["versions"][name].update({"max_prob_diff_vs_numpy_int8": diff,
+                                          "accuracy_drop": drop, "pass": bool(good)})
+    results["pytorch_accuracy"] = torch_acc
+    return ok
 
 
 def shape_checks(engine, variants, codes, stm, rng) -> bool:
@@ -140,7 +190,8 @@ def main() -> int:
     print(f"PyTorch accuracy {(ref_probs.argmax(1) == labels).mean() * 100:.3f}% "
           f"({time.time() - start:.1f} s)")
 
-    engine = Engine(args.model / "warpmate_net.npz")
+    int8_path = args.model / "warpmate_net_int8.npz"
+    engine = Engine(args.model / "warpmate_net.npz", int8_path if int8_path.exists() else None)
     print(f"Inference library: GPU {'yes, ' + engine.device_name if engine.has_gpu else 'no'}; "
           f"variants {engine.variants if engine.has_gpu else []}")
 
@@ -158,13 +209,19 @@ def main() -> int:
     ok &= r["pass"]
 
     gpu_variants = engine.variants if engine.has_gpu else []
-    for v in gpu_variants:
+    for v in [v for v in gpu_variants if v != "int8"]:
         start = time.time()
         probs, logits = engine.gpu(v, codes, stm, logits=True)
         r = compare(v, probs, logits, ref_probs, ref_logits, labels, PROB_TOLERANCE)
         r["seconds_including_copies"] = time.time() - start
         results["versions"][v] = r
         ok &= r["pass"]
+
+    if engine.has_int8:
+        ok &= check_int8(engine, int8_path, gpu_variants, codes, stm, labels, ref_probs,
+                         ref_logits, n_cpu, results)
+    else:
+        print(f"\n(no {int8_path}: 8-bit checks skipped; make it with ml/quantize.py)")
 
     rng = np.random.default_rng(0)
     shapes_ok = shape_checks(engine, ["cpu"] + gpu_variants, codes, stm, rng)

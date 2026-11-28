@@ -44,6 +44,13 @@ int guarded(char* err, int errlen, F&& body) {
 
 #ifdef WARPMATE_HAS_CUDA
 constexpr int variant_count() { return kVariantCount; }
+
+GpuEngine& gpu_of(wm_engine* engine, int variant) {
+    if (!engine->gpu) throw std::runtime_error("no GPU available");
+    if (variant < 0 || variant >= variant_count())
+        throw std::invalid_argument("unknown variant " + std::to_string(variant));
+    return *engine->gpu;
+}
 #endif
 
 }  // namespace
@@ -57,7 +64,7 @@ wm_engine* wm_create(const char* float_npz, const char* int8_npz, char* err, int
         if (int8_npz) engine->int8 = std::make_unique<Int8Weights>(load_int8_weights(int8_npz));
 #ifdef WARPMATE_HAS_CUDA
         if (!GpuEngine::device_name().empty())
-            engine->gpu = std::make_unique<GpuEngine>(engine->weights);
+            engine->gpu = std::make_unique<GpuEngine>(engine->weights, engine->int8.get());
 #endif
     });
     return status == 0 ? engine.release() : nullptr;
@@ -105,19 +112,6 @@ int wm_eval_cpu(wm_engine* engine, int int8, const int16_t* codes, int slots,
         }
     });
 }
-
-namespace {
-
-#ifdef WARPMATE_HAS_CUDA
-GpuEngine& gpu_of(wm_engine* engine, int variant) {
-    if (!engine->gpu) throw std::runtime_error("no GPU available");
-    if (variant < 0 || variant >= variant_count())
-        throw std::invalid_argument("unknown variant " + std::to_string(variant));
-    return *engine->gpu;
-}
-#endif
-
-}  // namespace
 
 int wm_eval_gpu(wm_engine* engine, int variant, const int16_t* codes, int slots,
                 const uint8_t* stm, int n, float* probs, float* logits, char* err, int errlen) {

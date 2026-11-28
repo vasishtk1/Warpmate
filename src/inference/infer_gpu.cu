@@ -238,6 +238,108 @@ constexpr int kFusedBoards = 8;
 constexpr int kSparseBoards = 16;
 
 // ---------------------------------------------------------------------------
+// Variant kInt8: the sparse kernel with 8-bit weights (see Int8Weights in
+// network.h and ml/quantize.py for the math).
+//
+// Layer 2 uses __dp4a, a T4 instruction that treats two 32-bit numbers as
+// four 8-bit numbers each, multiplies the four pairs and adds them to a
+// 32-bit total: 4 multiply-adds in one instruction, on data 4x smaller.
+//
+// The scaling steps use __fmul_rn / __fadd_rn instead of a * b + c. Normally
+// the compiler fuses a * b + c into one instruction with a single rounding
+// (an "FMA"); these force the separate roundings that NumPy and the C++
+// reference use, so the 8-bit h1 values come out bit-for-bit identical
+// and the GPU can be checked exactly against them.
+
+// 4 multiply-adds of 8-bit numbers. Falls back to plain code on GPUs older
+// than __dp4a (compute capability 6.1); the T4 is 7.5.
+__device__ inline int dot4_int8(int a, int b, int acc) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 610
+    return __dp4a(a, b, acc);
+#else
+    for (int i = 0; i < 4; ++i)
+        acc += static_cast<int>(static_cast<int8_t>(a >> (8 * i))) *
+               static_cast<int>(static_cast<int8_t>(b >> (8 * i)));
+    return acc;
+#endif
+}
+
+template <int kBoards>
+__global__ void __launch_bounds__(kBlock)
+    int8_kernel(const int16_t* __restrict__ codes, int slots, const uint8_t* __restrict__ stm,
+                int n, const int8_t* __restrict__ q1t, const float* __restrict__ s1,
+                const float* __restrict__ b1, float a1, const int* __restrict__ q2w,
+                const float* __restrict__ m2, const float* __restrict__ b2,
+                const float* __restrict__ w3, const float* __restrict__ b3, float* probs,
+                float* logits) {
+    constexpr int kWords = kH1 / 4;  // h1 as 64 words of four 8-bit numbers
+    __shared__ int16_t s_codes[kBoards * kMaxSlots];
+    __shared__ uint8_t s_stm[kBoards];
+    __shared__ int h1q[kBoards][kWords];
+    __shared__ float h2[kBoards][kH2];
+
+    const int t = threadIdx.x;
+    const long long first = static_cast<long long>(blockIdx.x) * kBoards;
+    const int count = static_cast<int>(min(static_cast<long long>(kBoards), n - first));
+
+    for (int i = t; i < kBoards * slots; i += kBlock)
+        s_codes[i] = i / slots < count ? codes[first * slots + i] : kPad;
+    if (t < kBoards) s_stm[t] = t < count ? stm[first + t] : 1;
+    __syncthreads();
+
+    // ---- Layer 1: integer sum of 8-bit weight rows, one scale, then round
+    // to an 8-bit h1. A warp reads 32 neighbouring bytes of a row at once.
+    const int j = t;
+#pragma unroll
+    for (int b = 0; b < kBoards; ++b) {
+        int acc = 0;
+        for (int s = 0; s < slots; ++s) {
+            const int c = s_codes[b * slots + s];
+            if (is_piece_device(c)) acc += q1t[c * kH1 + j];
+        }
+        if (s_stm[b] == 0) acc += q1t[kStmInput * kH1 + j];
+        const float h = fmaxf(__fadd_rn(__fmul_rn(s1[j], static_cast<float>(acc)), b1[j]), 0.0f);
+        // Round to nearest (ties to even, like np.rint), cap at 127. h >= 0.
+        const int q = min(127, __float2int_rn(h / a1));
+        // Byte j of board b's row: word j / 4, byte j % 4.
+        reinterpret_cast<int8_t*>(h1q[b])[j] = static_cast<int8_t>(q);
+    }
+    __syncthreads();
+
+    // ---- Layer 2: 64 __dp4a per neuron per board instead of 256 multiplies.
+    // q2w is stored word-major (q2w[w * 64 + j2] = 4 weights of neuron j2), so
+    // a warp's 32 threads read 32 neighbouring words.
+    {
+        constexpr int kGroups = kBlock / kH2;
+        constexpr int kPer = kBoards / kGroups;
+        const int j2 = t % kH2, g = t / kH2;
+        int acc[kPer];
+#pragma unroll
+        for (int i = 0; i < kPer; ++i) acc[i] = 0;
+        for (int w = 0; w < kWords; ++w) {
+            const int wq = q2w[w * kH2 + j2];
+#pragma unroll
+            for (int i = 0; i < kPer; ++i) acc[i] = dot4_int8(wq, h1q[g + i * kGroups][w], acc[i]);
+        }
+#pragma unroll
+        for (int i = 0; i < kPer; ++i)
+            h2[g + i * kGroups][j2] =
+                fmaxf(__fadd_rn(__fmul_rn(m2[j2], static_cast<float>(acc[i])), b2[j2]), 0.0f);
+    }
+    __syncthreads();
+
+    // ---- Layer 3 + softmax, 32-bit.
+    {
+        constexpr int kWarps = kBlock / 32;
+        const int warp = t / 32, lane = t % 32;
+        for (int b = warp; b < kBoards; b += kWarps)
+            output_layer_warp(h2[b], w3, b3, lane, first + b, b < count, probs, logits);
+    }
+}
+
+constexpr int kInt8Boards = 16;
+
+// ---------------------------------------------------------------------------
 
 // A GPU buffer that grows when a bigger batch arrives (and never shrinks).
 template <class T>
@@ -276,6 +378,7 @@ const char* variant_name(Variant v) {
         case Variant::kNaive: return "naive";
         case Variant::kFused: return "fused";
         case Variant::kSparse: return "sparse";
+        case Variant::kInt8: return "int8";
     }
     return "?";
 }
@@ -285,6 +388,13 @@ struct GpuEngine::Impl {
     float *w1t = nullptr, *b1 = nullptr, *w2t = nullptr, *b2 = nullptr, *w3t = nullptr,
           *w3 = nullptr, *b3 = nullptr;
 
+    // 8-bit weights (null if not loaded).
+    int8_t* q1t = nullptr;
+    int* q2w = nullptr;
+    float *s1 = nullptr, *qb1 = nullptr, *m2 = nullptr, *qb2 = nullptr, *qw3 = nullptr,
+          *qb3 = nullptr;
+    float a1 = 1.0f;
+
     // Scratch memory for the naive variant's in-between results.
     DeviceBuffer<float> x, h1, h2, logits;
     // Buffers for run_host.
@@ -293,15 +403,17 @@ struct GpuEngine::Impl {
     DeviceBuffer<float> probs, host_logits;
 
     ~Impl() {
-        for (float* p : {w1t, b1, w2t, b2, w3t, w3, b3})
+        for (float* p : {w1t, b1, w2t, b2, w3t, w3, b3, s1, qb1, m2, qb2, qw3, qb3})
             if (p) cudaFree(p);
+        if (q1t) cudaFree(q1t);
+        if (q2w) cudaFree(q2w);
         for (auto* buf : {&x, &h1, &h2, &logits, &probs, &host_logits}) buf->release();
         codes.release();
         stm.release();
     }
 };
 
-GpuEngine::GpuEngine(const FloatWeights& w) : impl_(new Impl) {
+GpuEngine::GpuEngine(const FloatWeights& w, const Int8Weights* q) : impl_(new Impl) {
     try {
         impl_->w1t = upload(w.w1t);
         impl_->b1 = upload(w.b1);
@@ -315,6 +427,30 @@ GpuEngine::GpuEngine(const FloatWeights& w) : impl_(new Impl) {
         impl_->w3t = upload(w3t);
         impl_->w3 = upload(w.w3);
         impl_->b3 = upload(w.b3);
+        if (q) {
+            impl_->q1t = upload(q->q1t);
+            // Pack q2 (64 rows of 256 bytes) into 32-bit words, four weights
+            // per word, word-major: word w of neuron j holds q2[j][4w .. 4w+3],
+            // the first one in the lowest byte (the order __dp4a uses).
+            std::vector<int> q2w(static_cast<size_t>(kH1 / 4) * kH2);
+            for (int jj = 0; jj < kH2; ++jj)
+                for (int wi = 0; wi < kH1 / 4; ++wi) {
+                    uint32_t word = 0;
+                    for (int i = 0; i < 4; ++i)
+                        word |= static_cast<uint32_t>(static_cast<uint8_t>(
+                                    q->q2[static_cast<size_t>(jj) * kH1 + 4 * wi + i]))
+                                << (8 * i);
+                    q2w[static_cast<size_t>(wi) * kH2 + jj] = static_cast<int>(word);
+                }
+            impl_->q2w = upload(q2w);
+            impl_->s1 = upload(q->s1);
+            impl_->qb1 = upload(q->b1);
+            impl_->m2 = upload(q->m2);
+            impl_->qb2 = upload(q->b2);
+            impl_->qw3 = upload(q->w3);
+            impl_->qb3 = upload(q->b3);
+            impl_->a1 = q->a1;
+        }
     } catch (...) {
         delete impl_;
         throw;
@@ -360,6 +496,13 @@ void GpuEngine::run(Variant v, const int16_t* codes, int slots, const uint8_t* s
                 <<<static_cast<unsigned>((n + kSparseBoards - 1) / kSparseBoards), kBlock, 0,
                    stream>>>(codes, slots, stm, n, m.w1t, m.b1, m.w2t, m.b2, m.w3, m.b3, probs,
                              logits);
+            break;
+        case Variant::kInt8:
+            if (!m.q1t) throw std::runtime_error("8-bit weights weren't loaded");
+            int8_kernel<kInt8Boards>
+                <<<static_cast<unsigned>((n + kInt8Boards - 1) / kInt8Boards), kBlock, 0,
+                   stream>>>(codes, slots, stm, n, m.q1t, m.s1, m.qb1, m.a1, m.q2w, m.m2, m.qb2,
+                             m.qw3, m.qb3, probs, logits);
             break;
         default:
             throw std::invalid_argument("unknown inference variant");
