@@ -219,6 +219,12 @@ export default function App() {
               <span className={`rounded-full px-2.5 py-1 ${status.network === "trained" ? "bg-emerald-400/15 text-emerald-300" : "bg-amber-400/15 text-amber-300"}`}>
                 network: {status.network}
               </span>
+              {status.backend && status.backend !== "placeholder" && (
+                <span className="rounded-full bg-ink-800 px-2.5 py-1 text-ink-300"
+                      title={status.backend === "cuda" ? "Warpmate's own CUDA kernels" : "PyTorch on the CPU (no NVIDIA GPU here)"}>
+                  runs on: {status.backend === "cuda" ? "CUDA" : "PyTorch (CPU)"}
+                </span>
+              )}
               <span className="rounded-full bg-ink-800 px-2.5 py-1 text-ink-300">{status.tables.length} tables loaded</span>
             </>
           )}

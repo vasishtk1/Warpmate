@@ -5,6 +5,8 @@
 Environment variables (optional):
     WARPMATE_TABLES  directory of solved .wmtb tables (default: <repo>/tables)
     WARPMATE_MODEL   trained network (default: <repo>/model/warpmate_net.pt)
+    WARPMATE_BACKEND auto (default: CUDA kernels if a GPU is present, else
+                     PyTorch), cuda, or torch
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ def status() -> dict:
     return {
         "tables": sorted(analyzer.tables.tables),
         "network": "placeholder" if analyzer.network.placeholder else "trained",
+        "backend": analyzer.network.backend,      # "cuda", "pytorch" or "placeholder"
+        "backend_note": analyzer.network.backend_note,
         "model_path": str(MODEL),
     }
 

@@ -7,6 +7,7 @@ Kept separate from the web server (app.py) so it can be tested directly.
 from __future__ import annotations
 
 import json
+import os
 import random
 import sys
 from dataclasses import dataclass
@@ -29,20 +30,45 @@ PAD = 769  # must match ml/model.py
 class Network:
     """The trained network, or a clearly marked placeholder if none is found.
 
-    TEMPORARY (see notes/DASHBOARD_TODO.md): runs in PyTorch on the CPU.
-    Phase 4 replaces this with the custom CUDA inference kernels.
+    Runs on Warpmate's own CUDA kernels (the 32-bit "sparse" version, which
+    matches PyTorch) when the inference library was built with CUDA and a GPU
+    is present, e.g. on Colab or a rented GPU. Otherwise (e.g. on a Mac) it
+    runs in PyTorch on the CPU. WARPMATE_BACKEND=cuda or =torch forces one.
     """
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, backend: str | None = None):
+        backend = backend or os.environ.get("WARPMATE_BACKEND", "auto")
+        if backend not in ("auto", "cuda", "torch"):
+            raise ValueError(f"WARPMATE_BACKEND must be auto, cuda or torch, not {backend!r}")
         self.path = path
         self.model = None
+        self.engine = None
         self.placeholder = True
-        if path.exists():
-            import torch
-            from model import load
-            self.torch = torch
-            self.model = load(str(path), "cpu")
-            self.placeholder = False
+        self.backend = "placeholder"
+        self.backend_note = ""
+        if not path.exists():
+            return
+        import torch
+        from model import load
+        self.torch = torch
+        self.model = load(str(path), "cpu")  # also the source of the architecture info
+        self.placeholder = False
+        self.backend = "pytorch"
+        if backend == "torch":
+            return
+        try:
+            from inference import Engine
+            engine = Engine(path.with_name("warpmate_net.npz"))
+            if engine.has_gpu:
+                self.engine = engine
+                self.backend = "cuda"
+            else:
+                self.backend_note = "no NVIDIA GPU (or the library was built without CUDA)"
+        except (OSError, RuntimeError) as e:
+            self.backend_note = str(e)
+        if backend == "cuda" and self.engine is None:
+            raise RuntimeError(f"WARPMATE_BACKEND=cuda but the CUDA kernels can't run: "
+                               f"{self.backend_note}")
 
     def predict(self, boards: list[chess.Board]) -> np.ndarray:
         """(N, 3) probabilities of loss / draw / win for each side to move."""
@@ -51,15 +77,18 @@ class Network:
             # position gets the same made-up split. The UI labels it.
             return np.tile(np.array([1 / 3, 1 / 3, 1 / 3]), (len(boards), 1))
         width = max(len(b.piece_map()) for b in boards)
-        codes = np.full((len(boards), width), PAD, dtype=np.int64)
-        stm = np.zeros(len(boards), dtype=np.int64)
+        codes = np.full((len(boards), width), PAD, dtype=np.int16)
+        stm = np.zeros(len(boards), dtype=np.uint8)
         for i, board in enumerate(boards):
             c, s = encode(board)
             codes[i, :len(c)] = c
             stm[i] = s
+        if self.engine is not None:
+            return self.engine.gpu("sparse", codes, stm)
         from model import features
         with self.torch.no_grad():
-            x = features(self.torch.from_numpy(codes), self.torch.from_numpy(stm))
+            x = features(self.torch.from_numpy(codes.astype(np.int64)),
+                         self.torch.from_numpy(stm.astype(np.int64)))
             return self.torch.softmax(self.model(x), 1).numpy()
 
 
@@ -97,9 +126,9 @@ def perfect_from_value(value: int) -> Perfect | None:
 
 
 class Analyzer:
-    def __init__(self, tables_dir: Path, model_path: Path):
+    def __init__(self, tables_dir: Path, model_path: Path, backend: str | None = None):
         self.tables = TableSet(tables_dir)
-        self.network = Network(model_path)
+        self.network = Network(model_path, backend)
 
     # ---- perfect answers ----
 

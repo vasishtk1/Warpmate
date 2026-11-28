@@ -38,6 +38,7 @@ export interface Analysis {
 export interface Status {
   tables: string[];
   network: "trained" | "placeholder";
+  backend?: "cuda" | "pytorch" | "placeholder";
 }
 
 export interface ModelInfo {

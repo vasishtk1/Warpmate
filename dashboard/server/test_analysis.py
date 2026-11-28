@@ -14,7 +14,7 @@ from pathlib import Path
 import chess
 import numpy as np
 
-from analysis import ROOT, Analyzer, invalid_reason
+from analysis import PAD, ROOT, Analyzer, encode, invalid_reason
 
 TABLES = ROOT / "tables"
 
@@ -145,6 +145,56 @@ class NetworkEncoding(unittest.TestCase):
             # Works for a full board too (more than 5 pieces).
             full = a.network.predict([chess.Board()])
             self.assertEqual(full.shape, (1, 3))
+
+    def test_inference_library_matches_pytorch(self):
+        """The dashboard's boards give the same answers through Warpmate's own
+        inference library (CPU reference here; the CUDA version too when
+        there is a GPU) as through PyTorch."""
+        import torch
+        sys.path.insert(0, str(ROOT / "ml"))
+        from model import WarpmateNet, save
+        try:
+            from inference import Engine, library_path
+        except ImportError as e:
+            self.skipTest(str(e))
+        if not library_path().exists():
+            self.skipTest("inference library not built")
+
+        torch.manual_seed(1)
+        net = WarpmateNet()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "warpmate_net.pt"
+            save(net, str(path))
+            linears = [m for m in net.layers if isinstance(m, torch.nn.Linear)]
+            arrays = {}
+            for k, layer in enumerate(linears):  # same export as ml/train.py
+                arrays[f"w{k}"] = layer.weight.detach().numpy()
+                arrays[f"b{k}"] = layer.bias.detach().numpy()
+            np.savez(Path(tmp) / "warpmate_net.npz", **arrays)
+
+            a = Analyzer(Path(tmp), path, backend="torch")
+            self.assertEqual(a.network.backend, "pytorch")
+            fens = ["8/8/8/8/8/2k5/1R6/K7 w - - 0 1", "r7/8/8/8/8/6k1/8/7K b - - 0 1",
+                    "8/8/1q6/8/3k4/8/2R5/K7 b - - 0 1",
+                    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1"]
+            boards = [chess.Board(f) for f in fens]
+            expected = a.network.predict(boards)
+
+            width = max(len(b.piece_map()) for b in boards)
+            codes = np.full((len(boards), width), PAD, dtype=np.int16)
+            stm = np.zeros(len(boards), dtype=np.uint8)
+            for i, b in enumerate(boards):
+                c, s = encode(b)
+                codes[i, :len(c)], stm[i] = c, s
+            engine = Engine(Path(tmp) / "warpmate_net.npz")
+            np.testing.assert_allclose(engine.cpu(codes, stm), expected, atol=1e-5)
+
+            auto = Analyzer(Path(tmp), path)
+            if engine.has_gpu:
+                self.assertEqual(auto.network.backend, "cuda")
+                np.testing.assert_allclose(auto.network.predict(boards), expected, atol=1e-5)
+            else:
+                self.assertEqual(auto.network.backend, "pytorch")
 
 
 if __name__ == "__main__":

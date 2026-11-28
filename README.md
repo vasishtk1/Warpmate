@@ -47,7 +47,7 @@ flowchart LR
 - **Every 3- and 4-piece endgame** (34 tables; all but KPvKP, which needs en passant) solved on the GPU *(done)*
 - **Verified against Syzygy**: all 1,945,584 legal positions of the 3-piece endgames, and random samples totalling 4,358,127 legal positions across all 34 tables, match the official tablebases with 0 mismatches *(done)*
 - **Neural network** (769 → 256 → 64 → 3, 213,763 weights) trained on 27.9 million solver-labelled positions: **98.06%** win/draw/loss accuracy on 3.09 million held-out positions (baseline 35.97%), and its favourite move keeps the best result in 99.18% of positions. On 5-piece endgames it never saw, it ranges from 87.6% (KQRvKR) to worse than guessing "draw" (KRBvKR, KRNvKR) ([details](docs/network.md)) *(done)*
-- **Custom CUDA inference**: batched evaluation, fused layers, and 8-bit quantization, compared with PyTorch and TensorRT *(planned)*
+- **Custom CUDA inference** (`src/inference/`): four kernel versions, from one kernel per layer to the whole network in a single kernel with a sparse first layer (adding up the weight rows of the 3 to 6 pieces on the board instead of multiplying 769 inputs) and 8-bit weights with `__dp4a`. Checked against PyTorch on every test position, and benchmarked against PyTorch, `torch.compile` and TensorRT ([details](docs/inference.md)) *(built; results pending the Colab run)*
 - **Two-player dashboard** (React + FastAPI, runs locally): set up any position or play one out with drag-and-drop moves, the network's win/draw/loss bars, the perfect answer, ranked moves, and blunder warnings *(in progress)*
 - **Benchmarks** comparing CPU and GPU, full scan and frontier, with Nsight profiling *(done)*
 
@@ -61,7 +61,7 @@ flowchart LR
 | Machine learning | Python, PyTorch |
 | Inference | CUDA C++, compared with PyTorch and TensorRT |
 | Profiling | NVIDIA Nsight Systems / Nsight Compute |
-| Dashboard | HTML, CSS, JavaScript |
+| Dashboard | React, TypeScript, Tailwind CSS, FastAPI |
 
 ## Project structure
 
@@ -72,6 +72,7 @@ Warpmate/
 │   ├── core/              Bitboards, piece attacks and stored values (CPU + GPU)
 │   ├── egtb/              Solver: positions, moves, per-position step, linked tables, CPU driver
 │   ├── gpu/               CUDA solver: kernels and GPU memory management
+│   ├── inference/         Network inference: CUDA kernels, CPU reference, C interface for Python
 │   └── io/                Tablebase file format
 ├── tools/
 │   ├── gen.cpp            warpmate-gen: solve any endgame (and its dependencies)
@@ -80,7 +81,8 @@ Warpmate/
 ├── tests/                 Unit, consistency, and CPU-vs-GPU tests
 ├── examples/
 │   └── cuda_basics/       Introductory CUDA programs
-├── ml/                    Neural network: dataset builder, model, training, evaluation (PyTorch)
+├── ml/                    Neural network: dataset, model, training, evaluation (PyTorch), 8-bit
+│                          quantization, inference checks and benchmarks
 ├── dashboard/             Two-player analysis app: React page (web/) and FastAPI server (server/)
 ├── notebooks/             Colab notebooks to build and run on a free GPU
 ├── scripts/
@@ -104,7 +106,15 @@ ctest --test-dir build          # run the tests
 ./build/warpmate-bench KQvKR       # time CPU and GPU, full scan vs frontier
 ```
 
-No NVIDIA GPU? Open [`notebooks/step6c_frontier_gpu.ipynb`](notebooks/step6c_frontier_gpu.ipynb) in Google Colab with a free T4 GPU.
+No NVIDIA GPU? Open [`notebooks/step6c_frontier_gpu.ipynb`](notebooks/step6c_frontier_gpu.ipynb) in Google Colab with a free T4 GPU. [`notebooks/phase4_inference.ipynb`](notebooks/phase4_inference.ipynb) checks and benchmarks the inference kernels.
+
+With a trained network in `model/` (from the Phase 3 notebook):
+
+```bash
+python ml/quantize.py --model model --data data/dataset.npz          # make the 8-bit network
+python ml/check_inference.py --model model --data data/dataset.npz   # compare with PyTorch
+python ml/bench_inference.py --model model --data data/dataset.npz   # benchmarks (GPU only)
+```
 
 Example probe output (abridged):
 
@@ -124,7 +134,7 @@ Perfect play: 1. Ke6 Kc7 2. d6+ Kb6 3. d7 Kc7 4. Ke7 Kb6 5. d8=Q+ Kc5 ... 11. Qa
 
 ### Dashboard
 
-A local web app to set up or play out positions, with the network's guess next to the perfect answer. It needs the solved tables in `tables/` and, for real network output, trained weights in `model/warpmate_net.pt` (from the Phase 3 notebook); without them the bars are a labelled placeholder.
+A local web app to set up or play out positions, with the network's guess next to the perfect answer. It needs the solved tables in `tables/` and, for real network output, trained weights in `model/warpmate_net.pt` (from the Phase 3 notebook); without them the bars are a labelled placeholder. On a machine with an NVIDIA GPU the network runs on Warpmate's CUDA kernels; otherwise in PyTorch on the CPU.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r dashboard/server/requirements.txt
