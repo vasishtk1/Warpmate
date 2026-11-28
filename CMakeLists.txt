@@ -58,6 +58,25 @@ else()
   set(WARPMATE_SOLVER_LIBS warpmate_core)
 endif()
 
+# Inference: Warpmate's own network inference code (CPU reference + CUDA
+# kernels). warpmate_infer_core is used by the C++ tests; the shared library
+# libwarpmate_infer is what Python loads (ml/inference.py). Without CUDA it is
+# still built, with the CPU reference only.
+set(WARPMATE_INFER_SOURCES src/inference/npz.cpp src/inference/network.cpp)
+if(WARPMATE_HAS_CUDA)
+  list(APPEND WARPMATE_INFER_SOURCES src/inference/infer_gpu.cu)
+endif()
+add_library(warpmate_infer_core STATIC ${WARPMATE_INFER_SOURCES})
+target_include_directories(warpmate_infer_core PUBLIC src)
+set_target_properties(warpmate_infer_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(WARPMATE_HAS_CUDA)
+  target_link_libraries(warpmate_infer_core PUBLIC CUDA::cudart_static)
+  target_compile_definitions(warpmate_infer_core PUBLIC WARPMATE_HAS_CUDA=1)
+endif()
+
+add_library(warpmate_infer SHARED src/inference/c_api.cpp)
+target_link_libraries(warpmate_infer PRIVATE warpmate_infer_core)
+
 # Command-line tools
 add_executable(warpmate-probe tools/probe.cpp)
 target_link_libraries(warpmate-probe PRIVATE warpmate_core)
@@ -79,6 +98,10 @@ enable_testing()
 add_executable(warpmate-test-egtb tests/test_egtb.cpp)
 target_link_libraries(warpmate-test-egtb PRIVATE warpmate_core)
 add_test(NAME egtb COMMAND warpmate-test-egtb)
+
+add_executable(warpmate-test-inference tests/test_inference.cpp)
+target_link_libraries(warpmate-test-inference PRIVATE warpmate_infer_core)
+add_test(NAME inference COMMAND warpmate-test-inference)
 
 if(WARPMATE_HAS_CUDA)
   add_executable(warpmate-test-egtb-gpu tests/test_egtb_gpu.cpp)
